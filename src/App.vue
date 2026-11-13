@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import DrivePanel from "./DrivePanel.vue";
 import CloudDrivePanel from "./CloudDrivePanel.vue";
+import AccountDialog from "./AccountDialog.vue";
 import { type Provider, providers, providerName } from "./providers";
 import UploadPanel from "./UploadPanel.vue";
 import SharePanel from "./SharePanel.vue";
@@ -34,6 +35,7 @@ import {
   FolderOpen,
   Link,
   LoaderCircle,
+  LogOut,
   Pause,
   Play,
   Plus,
@@ -98,6 +100,11 @@ const driveBusy = ref(false);
 const downloadBox = ref<InstanceType<typeof DownloadBox> | null>(null);
 const signingIn = ref<Provider[]>([]);
 const refreshing = ref<Provider[]>([]);
+const accountsReady = ref(false);
+const addDialog = ref<"" | "account" | "drive">("");
+const logoutTarget = ref<Provider | null>(null);
+const loggingOut = ref(false);
+const logoutError = ref("");
 const accountFor = (provider: Provider) =>
   state.value.accounts.find((a) => a.provider === provider) || {
     provider,
@@ -107,6 +114,12 @@ const accountFor = (provider: Provider) =>
   };
 const connectedCount = computed(
   () => state.value.accounts.filter((a) => a.loggedIn).length,
+);
+const connectedProviders = computed(() =>
+  providers.filter((p) => accountFor(p.id).loggedIn),
+);
+const driveTabs = computed(() =>
+  providers.filter((p) => accountFor(p.id).loggedIn),
 );
 const error = ref("");
 const toast = ref("");
@@ -119,6 +132,7 @@ const removeError = ref("");
 let interval: ReturnType<typeof setInterval> | undefined;
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let unlisten: UnlistenFn | undefined;
+let unlistenLoginClosed: UnlistenFn | undefined;
 let loadingSnapshot = false;
 const activeStatuses = ["active", "waiting", "resolving", "seeding"];
 const active = computed(() =>
@@ -245,15 +259,83 @@ async function checkAccount(provider: Provider, silent = false) {
     if (i >= 0) state.value.accounts[i] = account;
     else state.value.accounts.push(account);
     if (account.loggedIn) {
-      if (signingIn.value.includes(provider) || !silent)
-        notice(`${providerName(provider)}已连接`);
+      const wasSigningIn = signingIn.value.includes(provider);
+      if (wasSigningIn || !silent) notice(`${providerName(provider)}已连接`);
       signingIn.value = signingIn.value.filter((p) => p !== provider);
+      // A drive the user just signed into becomes the active drive tab.
+      if (wasSigningIn) driveProvider.value = provider;
     } else if (!silent) notice(account.message);
   } catch (e) {
     if (!silent) error.value = String(e);
   } finally {
     refreshing.value = refreshing.value.filter((p) => p !== provider);
   }
+}
+function openDrive(provider: Provider) {
+  driveProvider.value = provider;
+  tab.value = "drive";
+}
+function dialogLogin(provider: Provider) {
+  addDialog.value = "";
+  void login(provider);
+}
+function dialogSelect(provider: Provider) {
+  addDialog.value = "";
+  openDrive(provider);
+}
+function confirmLogout(provider: Provider) {
+  logoutError.value = "";
+  logoutTarget.value = provider;
+}
+async function logout() {
+  const provider = logoutTarget.value;
+  if (!provider || loggingOut.value) return;
+  loggingOut.value = true;
+  logoutError.value = "";
+  try {
+    const account = await invoke<Account>("logout_account", { provider });
+    const i = state.value.accounts.findIndex((a) => a.provider === provider);
+    if (i >= 0) state.value.accounts[i] = account;
+    else state.value.accounts.push(account);
+    signingIn.value = signingIn.value.filter((p) => p !== provider);
+    logoutTarget.value = null;
+    notice(`${providerName(provider)}已退出登录`);
+  } catch (e) {
+    logoutError.value = String(e);
+  } finally {
+    loggingOut.value = false;
+  }
+}
+// Escape and focus handling for the logout dialog: keydown on the section only
+// fires when focus is inside it, so listen on the document while it is open.
+const logoutCancel = ref<HTMLButtonElement | null>(null);
+let logoutPreviousFocus: HTMLElement | null = null;
+function onLogoutKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape" && !loggingOut.value) logoutTarget.value = null;
+}
+watch(logoutTarget, (target) => {
+  if (target) {
+    logoutPreviousFocus = document.activeElement as HTMLElement | null;
+    document.addEventListener("keydown", onLogoutKeydown);
+    void nextTick(() => logoutCancel.value?.focus());
+  } else {
+    document.removeEventListener("keydown", onLogoutKeydown);
+    logoutPreviousFocus?.focus();
+    logoutPreviousFocus = null;
+  }
+});
+// Keep the drive switcher pointing at a connected provider: when the selected
+// one is logged out, fall back to the first connected account.
+watch(connectedProviders, (connected) => {
+  if (connected.length && !accountFor(driveProvider.value).loggedIn)
+    driveProvider.value = connected[0].id;
+});
+// Closing the login window cancels the pending login: run one final check (the
+// user may have signed in right before closing), then stop showing "waiting".
+async function cancelLogin(provider: Provider) {
+  await checkAccount(provider, true);
+  if (!accountFor(provider).loggedIn)
+    signingIn.value = signingIn.value.filter((p) => p !== provider);
 }
 async function chooseDirectory() {
   const path = await open({
@@ -325,7 +407,11 @@ async function folder(id?: string) {
 onMounted(async () => {
   await refresh();
   unlisten = await listen("tasks-changed", refresh);
-  for (const provider of providers) void checkAccount(provider.id, true);
+  unlistenLoginClosed = await listen<string>("login-window-closed", (event) => {
+    void cancelLogin(event.payload as Provider);
+  });
+  await Promise.all(providers.map((p) => checkAccount(p.id, true)));
+  accountsReady.value = true;
   interval = setInterval(() => {
     for (const provider of signingIn.value) void checkAccount(provider, true);
   }, 4000);
@@ -334,6 +420,8 @@ onUnmounted(() => {
   clearInterval(interval);
   clearTimeout(toastTimer);
   unlisten?.();
+  unlistenLoginClosed?.();
+  document.removeEventListener("keydown", onLogoutKeydown);
 });
 </script>
 
@@ -477,9 +565,25 @@ onUnmounted(() => {
         </button>
       </div>
       <template v-if="tab === 'drive'">
+        <div v-if="!accountsReady" class="drive-placeholder card">
+          <LoaderCircle :size="22" class="spinning" />
+          <span>正在检查各网盘的登录状态…</span>
+        </div>
+        <div v-else-if="!driveTabs.length" class="drive-placeholder card">
+          <span class="empty-illustration"
+            ><FolderOpen :size="38" :stroke-width="1.4" /><span
+              ><Plus :size="14" /></span
+          ></span>
+          <h3>还没有可用的网盘</h3>
+          <p>连接一个网盘账号后，就能在这里浏览和管理文件。</p>
+          <button class="primary" @click="addDialog = 'drive'">
+            <Plus :size="16" />添加网盘账号
+          </button>
+        </div>
+        <template v-else>
         <div class="drive-providers" role="group" aria-label="选择个人网盘">
           <button
-            v-for="provider in providers"
+            v-for="provider in driveTabs"
             :key="provider.id"
             :class="{ selected: driveProvider === provider.id }"
             :aria-pressed="driveProvider === provider.id"
@@ -487,10 +591,18 @@ onUnmounted(() => {
             @click="driveProvider = provider.id"
           >
             <span
-              class="drive-provider-dot"
+              class="drive-provider-avatar"
               :style="{ background: provider.color }"
-            ></span
+              >{{ provider.initial }}</span
             >{{ provider.name }}
+          </button>
+          <button
+            class="drive-provider-add"
+            title="添加网盘账号"
+            :disabled="driveBusy"
+            @click="addDialog = 'drive'"
+          >
+            <Plus :size="14" />添加网盘
           </button>
         </div>
         <DrivePanel
@@ -526,6 +638,7 @@ onUnmounted(() => {
             refresh();
           "
         />
+        </template>
       </template>
       <UploadPanel
         v-else-if="tab === 'uploads'"
@@ -549,44 +662,91 @@ onUnmounted(() => {
         "
       />
       <template v-else-if="tab === 'account'">
-        <p class="account-intro">
-          选择网盘，在官方窗口完成扫码或验证码登录。各网盘的登录状态独立保存在这台电脑上。
-        </p>
-        <div class="account-grid">
-          <section
-            v-for="provider in providers"
-            :key="provider.id"
-            class="account-card card"
-          >
-            <span
-              class="provider-avatar"
-              :style="{ background: provider.color }"
-              >{{ provider.initial }}</span
-            >
-            <h2>{{ provider.name }}</h2>
-            <strong>{{ accountFor(provider.id).name }}</strong>
-            <p :class="{ connected: accountFor(provider.id).loggedIn }">
-              {{ accountFor(provider.id).message }}
-            </p>
-            <button class="primary" @click="login(provider.id)">
-              <UserRound :size="17" />{{
-                accountFor(provider.id).loggedIn ? "打开网盘" : "登录账号"
-              }}
-            </button>
-            <button
-              class="text-button"
-              :disabled="refreshing.includes(provider.id)"
-              @click="checkAccount(provider.id)"
-            >
-              <RefreshCw
-                :size="15"
-                :class="{ spinning: refreshing.includes(provider.id) }"
-              />刷新登录状态
-            </button>
-          </section>
+        <div v-if="!accountsReady" class="account-checking card">
+          <LoaderCircle :size="22" class="spinning" />
+          <span>正在检查各网盘的登录状态…</span>
         </div>
+        <div v-else-if="!connectedProviders.length" class="account-empty card">
+          <span class="empty-illustration"
+            ><UserRound :size="38" :stroke-width="1.4" /><span
+              ><Plus :size="14" /></span
+          ></span>
+          <h3>还没有连接网盘账号</h3>
+          <p>连接后就能浏览网盘文件，把喜欢的内容下载到本地。</p>
+          <button class="primary" @click="addDialog = 'account'">
+            <Plus :size="16" />添加网盘账号
+          </button>
+        </div>
+        <template v-else>
+          <div class="account-list card">
+            <div class="account-list-caption">
+              <span>已连接的网盘</span>
+              <span class="page-count">{{ connectedProviders.length }}</span>
+            </div>
+            <article
+              v-for="provider in connectedProviders"
+              :key="provider.id"
+              class="account-row"
+            >
+              <span
+                class="provider-avatar"
+                :style="{ background: provider.color }"
+                >{{ provider.initial }}</span
+              >
+              <div class="account-row-copy">
+                <div class="account-row-title">
+                  <strong>{{ provider.name }}</strong>
+                  <span
+                    class="account-state"
+                    :class="{
+                      warn: accountFor(provider.id).message !== '账号已连接',
+                    }"
+                    :title="accountFor(provider.id).message"
+                    ><i></i>已连接</span
+                  >
+                </div>
+                <p :title="accountFor(provider.id).name">
+                  {{ accountFor(provider.id).name }}
+                </p>
+              </div>
+              <div class="account-row-actions">
+                <button class="secondary" @click="openDrive(provider.id)">
+                  <FolderOpen :size="15" />进入网盘
+                </button>
+                <button
+                  class="icon-button"
+                  title="刷新登录状态"
+                  :disabled="refreshing.includes(provider.id)"
+                  @click="checkAccount(provider.id)"
+                >
+                  <RefreshCw
+                    :size="16"
+                    :class="{ spinning: refreshing.includes(provider.id) }"
+                  />
+                </button>
+                <button
+                  class="icon-button logout"
+                  title="退出登录"
+                  @click="confirmLogout(provider.id)"
+                >
+                  <LogOut :size="16" />
+                </button>
+              </div>
+            </article>
+          </div>
+          <button class="account-add-row" @click="addDialog = 'account'">
+            <span class="account-add-icon"><Plus :size="17" /></span>
+            <span class="account-add-copy">
+              <strong>添加网盘账号</strong>
+              <small
+                >支持夸克、百度、115 等 {{ providers.length }} 个网盘</small
+              >
+            </span>
+            <ChevronRight :size="16" />
+          </button>
+        </template>
         <div class="privacy-note">
-          <ShieldCheck :size="17" />登录过期时，重新连接即可继续下载。
+          <ShieldCheck :size="17" />各网盘的登录状态独立保存在这台电脑上，登录过期时重新连接即可。
         </div>
       </template>
       <template v-else>
@@ -854,6 +1014,49 @@ onUnmounted(() => {
                   ? "删除任务及文件"
                   : "仅移除任务"
             }}
+          </button>
+        </div>
+      </section>
+    </div>
+    <AccountDialog
+      v-if="addDialog"
+      :accounts="state.accounts"
+      :signing-in="signingIn"
+      @login="dialogLogin"
+      @select="dialogSelect"
+      @close="addDialog = ''"
+    />
+    <div
+      v-if="logoutTarget"
+      class="modal-backdrop"
+      @click.self="!loggingOut && (logoutTarget = null)"
+    >
+      <section
+        class="confirm-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="logout-title"
+      >
+        <span class="dialog-icon"><LogOut :size="24" /></span>
+        <h2 id="logout-title">退出登录{{ providerName(logoutTarget) }}？</h2>
+        <p>
+          将清除这台电脑上保存的{{ providerName(logoutTarget)
+          }}登录信息，已有下载任务不受影响，重新连接后可继续使用。
+        </p>
+        <p v-if="logoutError" class="remove-task-error" role="alert">
+          {{ logoutError }}
+        </p>
+        <div class="button-row">
+          <button
+            ref="logoutCancel"
+            class="secondary"
+            :disabled="loggingOut"
+            @click="logoutTarget = null"
+          >
+            取消</button
+          ><button class="danger" :disabled="loggingOut" @click="logout">
+            <LoaderCircle v-if="loggingOut" :size="15" class="spinning" />
+            {{ loggingOut ? "正在退出…" : "退出登录" }}
           </button>
         </div>
       </section>

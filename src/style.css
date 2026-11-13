@@ -1042,11 +1042,29 @@ button.directory:hover {
   color: var(--accent);
   font-weight: 600;
 }
-.drive-provider-dot {
-  width: 7px;
-  height: 7px;
+.drive-providers button.waiting {
+  color: var(--accent);
+}
+.drive-provider-avatar {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
-  border-radius: 50%;
+  border-radius: 5px;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+.drive-providers button.drive-provider-add {
+  border: 1px dashed var(--line);
+  color: var(--muted);
+}
+.drive-providers button.drive-provider-add:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 .drive-workspace {
   display: flex;
@@ -1059,6 +1077,10 @@ button.directory:hover {
 .drive-workspace > .directory-row,
 .drive-workspace > .error-banner {
   flex-shrink: 0;
+}
+.drive-workspace > .drive-placeholder {
+  flex: 1;
+  min-height: 0;
 }
 .drive-workspace > .drive-panel {
   display: flex;
@@ -1302,24 +1324,6 @@ button.directory:hover {
   line-height: 1.7;
   font-size: 12px;
 }
-.account-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(205px, 1fr));
-  gap: 16px;
-}
-.account-card {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  padding: 22px;
-  transition:
-    box-shadow 0.18s,
-    border-color 0.18s;
-}
-.account-card:hover {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
-  box-shadow: var(--shadow);
-}
 .provider-avatar {
   display: grid;
   place-items: center;
@@ -1330,34 +1334,364 @@ button.directory:hover {
   font-weight: 650;
   color: white;
 }
-.account-card h2 {
-  margin: 17px 0 9px;
+/* Account page: only connected providers are listed, plus an add entry. */
+.account-checking {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 200px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.account-checking .spinning {
+  color: var(--accent);
+}
+.account-empty,
+.drive-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 44px 30px;
+  min-height: 280px;
+}
+.account-empty h3,
+.drive-placeholder h3 {
   font-size: 16px;
   font-weight: 600;
+  margin: 22px 0 9px;
+  color: var(--ink);
 }
-.account-card strong {
+.account-empty p,
+.drive-placeholder p {
   font-size: 12px;
-  font-weight: 500;
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.7;
 }
-.account-card p {
+.account-empty .primary,
+.drive-placeholder .primary {
+  margin-top: 22px;
+}
+.drive-placeholder > .spinning {
+  color: var(--accent);
+}
+.account-list {
+  overflow: hidden;
+}
+.account-list-caption {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.account-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 15px 18px;
+  border-bottom: 1px solid var(--line);
+  transition: background 0.16s;
+}
+.account-row:last-child {
+  border-bottom: 0;
+}
+.account-row:hover {
+  background: var(--surface-soft);
+}
+.account-row .provider-avatar {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 11px;
+  font-size: 16px;
+}
+.account-row-copy {
   flex: 1;
-  min-height: 38px;
-  margin: 9px 0 0;
+  min-width: 0;
+}
+.account-row-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.account-row-title strong {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.account-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  background: var(--success-soft);
+  color: var(--success);
+  font-size: 10.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.account-state i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.account-state.warn {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+.account-row-copy p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.account-row-actions .secondary {
+  min-height: 31px;
+  padding: 6px 12px;
+  font-size: 11.5px;
+}
+.account-row-actions .icon-button {
+  width: 31px;
+  height: 31px;
+}
+.icon-button.logout:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.account-add-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 13px;
+  width: 100%;
+  margin-top: 14px;
+  padding: 15px 18px;
+  border: 1.5px dashed color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-radius: 11px;
+  background: transparent;
+  text-align: left;
+  transition:
+    border-color 0.16s,
+    background 0.16s;
+}
+.account-add-row:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.account-add-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  transition: background 0.16s;
+}
+.account-add-row:hover .account-add-icon {
+  background: var(--surface);
+}
+.account-add-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+.account-add-copy strong {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.account-add-copy small {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 400;
+}
+.account-add-row > svg {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+/* Add-account dialog: search plus connected / available provider tiles. */
+.account-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(600px, 92vw);
+  padding: 24px 26px;
+  overflow: hidden;
+}
+.account-dialog .dialog-heading {
+  margin-bottom: 8px;
+}
+.account-dialog-sub {
+  margin: 0 0 16px;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.7;
-  word-break: break-word;
 }
-.account-card p.connected {
+.account-dialog .account-dialog-search {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  transition:
+    border-color 0.16s,
+    background 0.16s;
+}
+.account-dialog-search:focus-within {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+.account-dialog .account-dialog-search input {
+  flex: 1;
+  width: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 12px;
+  outline: none;
+}
+.account-dialog-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+}
+.provider-section + .provider-section {
+  margin-top: 16px;
+}
+.provider-section-caption {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 9px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.provider-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+}
+.provider-tile {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 11px;
+  min-width: 0;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  text-align: left;
+  transition:
+    border-color 0.16s,
+    background 0.16s,
+    box-shadow 0.16s;
+}
+.provider-tile:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: var(--accent-soft);
+  box-shadow: var(--shadow);
+}
+.provider-tile .provider-avatar {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  font-size: 14px;
+}
+.provider-tile-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.provider-tile-copy strong {
+  max-width: 100%;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.provider-tile-copy small {
+  max-width: 100%;
+  font-size: 10.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.provider-tile-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.provider-tile:hover .provider-tile-state {
+  color: var(--accent);
+}
+.provider-tile.connected .provider-tile-state,
+.provider-tile.connected:hover .provider-tile-state {
   color: var(--success);
 }
-.account-card .primary {
-  width: 100%;
-  margin-top: 18px;
+.provider-tile.waiting .provider-tile-state {
+  color: var(--accent);
 }
-.account-card .text-button {
-  align-self: center;
-  margin-top: 10px;
+.provider-search-empty {
+  margin: 0;
+  padding: 26px 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+.account-dialog-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 16px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+}
+.confirm-dialog .remove-task-error {
+  color: var(--danger);
 }
 .cloud-page-toolbar {
   display: flex;
@@ -1713,6 +2047,31 @@ button.directory:hover {
   .file-modified {
     font-size: 10px;
   }
+  .account-row {
+    gap: 11px;
+    padding: 13px 14px;
+  }
+  .account-row-actions .secondary {
+    padding: 6px 9px;
+  }
+  .account-list-caption {
+    padding: 12px 14px;
+  }
+  .account-add-row {
+    padding: 13px 14px;
+  }
+}
+@media (max-width: 640px) {
+  .provider-grid {
+    grid-template-columns: 1fr;
+  }
+  .account-row {
+    flex-wrap: wrap;
+  }
+  .account-row-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
 }
 @media (max-height: 730px) {
   .sidebar {
@@ -1758,6 +2117,14 @@ button.directory:hover {
   }
   .task-heading {
     margin-top: 15px;
+  }
+  .account-row {
+    padding-block: 12px;
+  }
+  .account-empty,
+  .drive-placeholder {
+    min-height: 220px;
+    padding: 30px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

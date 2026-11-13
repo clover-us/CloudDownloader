@@ -14,15 +14,16 @@ export const providers: {
   name: string;
   initial: string;
   color: string;
+  host: string;
 }[] = [
-  { id: "quark", name: "夸克网盘", initial: "夸", color: "#397cf3" },
-  { id: "baidu", name: "百度网盘", initial: "百", color: "#388cf8" },
-  { id: "pan115", name: "115 网盘", initial: "115", color: "#287bd7" },
-  { id: "pan123", name: "123 云盘", initial: "123", color: "#3671e4" },
-  { id: "c139", name: "139 云盘", initial: "139", color: "#27a380" },
-  { id: "uc", name: "UC 网盘", initial: "UC", color: "#e18b3b" },
-  { id: "lanzou", name: "蓝奏云", initial: "蓝", color: "#428ccf" },
-  { id: "ilanzou", name: "蓝奏云优享版", initial: "优", color: "#319ba7" },
+  { id: "quark", name: "夸克网盘", initial: "夸", color: "#397cf3", host: "pan.quark.cn" },
+  { id: "baidu", name: "百度网盘", initial: "百", color: "#388cf8", host: "pan.baidu.com" },
+  { id: "pan115", name: "115 网盘", initial: "115", color: "#287bd7", host: "115.com" },
+  { id: "pan123", name: "123 云盘", initial: "123", color: "#3671e4", host: "yun.123pan.cn" },
+  { id: "c139", name: "139 云盘", initial: "139", color: "#27a380", host: "yun.139.com" },
+  { id: "uc", name: "UC 网盘", initial: "UC", color: "#e18b3b", host: "drive.uc.cn" },
+  { id: "lanzou", name: "蓝奏云", initial: "蓝", color: "#428ccf", host: "pc.woozooo.com" },
+  { id: "ilanzou", name: "蓝奏云优享版", initial: "优", color: "#319ba7", host: "www.ilanzou.com" },
 ];
 export const anonymousShare = (id: Provider) =>
   ["uc", "lanzou", "ilanzou"].includes(id);

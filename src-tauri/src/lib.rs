@@ -120,6 +120,31 @@ async fn refresh_account(
 }
 
 #[tauri::command]
+async fn logout_account(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    provider: Provider,
+) -> Result<Account, String> {
+    trusted(&window)?;
+    session::forget(&app, provider)?;
+    let account = Account {
+        provider,
+        ..Account::default()
+    };
+    if let Some(current) = state
+        .accounts
+        .lock()
+        .unwrap()
+        .iter_mut()
+        .find(|a| a.provider == provider)
+    {
+        *current = account.clone();
+    }
+    Ok(account)
+}
+
+#[tauri::command]
 async fn parse_link(
     window: WebviewWindow,
     app: tauri::AppHandle,
@@ -717,6 +742,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_login,
             refresh_account,
+            logout_account,
             parse_link,
             snapshot,
             set_directory,

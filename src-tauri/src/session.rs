@@ -1,5 +1,5 @@
 use crate::{model::Provider, pan115_session, quark::Quark};
-use tauri::{Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 // A registered window can be observed before its CookieManager restoration
 // finishes. All 115 callers must wait for the complete initialization sequence.
@@ -76,6 +76,9 @@ pub fn window(
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
             let _ = close.hide();
+            // The user dismissed the login prompt: let the main window stop
+            // showing "waiting for login" for this provider.
+            let _ = close.emit_to("main", "login-window-closed", provider.key());
         }
     });
     Ok(window)
@@ -230,6 +233,32 @@ pub fn save_before_exit(app: &tauri::AppHandle) -> Result<(), String> {
             .cookies()
             .map_err(|_| "无法读取退出前的 115 登录资料")?;
         persist_pan115(app, cookies)?;
+    }
+    Ok(())
+}
+
+/// Clear a provider's persisted login state so the account can be removed from
+/// the connected list. The hidden login window is kept alive (recreating it
+/// would restore the 115 cookie cache), but its browsing data is wiped and it
+/// is pointed back at the login page.
+pub fn forget(app: &tauri::AppHandle, provider: Provider) -> Result<(), String> {
+    let window = window(app, provider, false)?;
+    window
+        .clear_all_browsing_data()
+        .map_err(|e| format!("无法清除登录信息：{e}"))?;
+    if provider == Provider::Pan115 {
+        let path = cache_path(app)?;
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("无法清除 115 登录资料：{error}")),
+        }
+        if let Some(state) = app.try_state::<crate::AppState>() {
+            state.session_cache_error.lock().unwrap().clear();
+        }
+    }
+    if let Ok(url) = provider.login_url().parse() {
+        let _ = window.navigate(url);
     }
     Ok(())
 }
