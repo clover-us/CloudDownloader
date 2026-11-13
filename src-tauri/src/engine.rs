@@ -12,6 +12,9 @@ mod bt_tests;
 #[cfg(test)]
 #[path = "engine_direct_tests.rs"]
 mod direct_tests;
+#[cfg(test)]
+#[path = "engine_settings_tests.rs"]
+mod settings_tests;
 
 #[derive(Clone)]
 pub struct Rpc {
@@ -25,8 +28,20 @@ pub struct Engine {
 }
 
 impl Engine {
+    /// 使用默认设置启动引擎；单元测试与调试期验证脚本使用。
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub fn start() -> Result<Self, String> {
-        Self::with_args(&[])
+        Self::start_with(&crate::settings::Settings::default())
+    }
+    /// 按用户设置启动引擎，让限速和并发数在第一次请求前就生效。
+    pub fn start_with(settings: &crate::settings::Settings) -> Result<Self, String> {
+        let options = settings.aria2_options();
+        let args: Vec<String> = options
+            .iter()
+            .map(|(key, value)| format!("--{key}={value}"))
+            .collect();
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        Self::with_args(&args)
     }
     fn with_args(extra: &[&str]) -> Result<Self, String> {
         let executable = find_binary()?;
@@ -43,7 +58,6 @@ impl Engine {
             "--summary-interval=0",
             "--download-result=hide",
             "--file-allocation=none",
-            "--max-concurrent-downloads=3",
             "--split=16",
             "--max-connection-per-server=16",
             "--min-split-size=1M",
@@ -239,6 +253,19 @@ impl Rpc {
                 .into());
         }
         Ok(data["result"].clone())
+    }
+    /// 立即把用户设置同步到 aria2 全局选项（限速、同时下载数）。
+    pub async fn change_global_options(
+        &self,
+        options: &[(&'static str, String)],
+    ) -> Result<(), String> {
+        let mut values = serde_json::Map::new();
+        for (key, value) in options {
+            values.insert((*key).to_string(), json!(value));
+        }
+        self.call("aria2.changeGlobalOption", vec![json!(values)])
+            .await
+            .map(|_| ())
     }
     pub async fn add(
         &self,

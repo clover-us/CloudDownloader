@@ -1,13 +1,13 @@
 # 使用指南
 
-下载 [v0.5.7 Release](https://github.com/sclliang/CloudDownloader/releases/tag/v0.5.7)：[Windows 安装版](https://github.com/sclliang/CloudDownloader/releases/download/v0.5.7/CloudDownloader_0.5.7_x64-setup.exe) · [便携版](https://github.com/sclliang/CloudDownloader/releases/download/v0.5.7/CloudDownloader-0.5.7-win-x64.zip) · [SHA-256 校验](https://github.com/sclliang/CloudDownloader/releases/download/v0.5.7/SHA256SUMS-0.5.7.txt)。
+下载 [v0.6.0 Release](https://github.com/sclliang/CloudDownloader/releases/tag/v0.6.0)：[Windows 安装版](https://github.com/sclliang/CloudDownloader/releases/download/v0.6.0/CloudDownloader_0.6.0_x64-setup.exe) · [便携版](https://github.com/sclliang/CloudDownloader/releases/download/v0.6.0/CloudDownloader-0.6.0-win-x64.zip) · [SHA-256 校验](https://github.com/sclliang/CloudDownloader/releases/download/v0.6.0/SHA256SUMS-0.6.0.txt)。
 
-1. 推荐运行 `CloudDownloader_0.5.7_x64-setup.exe` 中文安装包，默认安装到当前用户目录并创建快捷方式，缺少 WebView2 时会从微软下载运行时。也可解压便携版压缩包后运行 `CloudDownloader.exe`，移动时保留完整目录结构。
+1. 推荐运行 `CloudDownloader_0.6.0_x64-setup.exe` 中文安装包，默认安装到当前用户目录并创建快捷方式，缺少 WebView2 时会从微软下载运行时。也可解压便携版压缩包后运行 `CloudDownloader.exe`，移动时保留完整目录结构。
 2. 「新建下载」只有一个输入框：粘贴 HTTP/HTTPS 文件直链、网盘分享文字或 `magnet:?xt=urn:btih:…` 磁力链接，程序自动识别类型，点击「解析链接」预览文件。也可点击「导入种子」选择本地 `.torrent` 文件，种子的 HTTP/HTTPS 地址直接粘贴即可。
 3. 网盘分享自动识别提取码，可手动补充。需要登录的网盘在官方窗口自行完成登录；蓝奏云、优享版和 UC 分享可先尝试免登录，服务端要求登录时再连接账号。
 4. 普通文件可改文件名及连接数；网盘和 BT 可以选择文件，网盘还可浏览子文件夹。确认保存目录后点击「开始下载」。磁力解析可取消，获取元数据阶段不下载文件内容。
 5. 任务支持暂停、继续、重试。程序退出再启动后，未完成任务保持暂停；继续时重新核对下载来源。
-6. 点击窗口右上角关闭按钮会收进系统托盘，传输继续运行。点击托盘图标或右键选择「打开主窗口」恢复窗口；右键选择「退出程序」才会结束程序与下载引擎。
+6. 点击窗口右上角关闭按钮默认收进系统托盘，传输继续运行。点击托盘图标或右键选择「打开主窗口」恢复窗口；右键选择「退出程序」才会结束程序与下载引擎。「设置 → 通用」可把关闭行为改为直接退出。
 
 需要 Windows 10/11 x64 和 Microsoft Edge WebView2 Runtime。下载引擎位于 `bin/aria2c.exe`，程序按主 EXE 所在目录定位引擎，不依赖启动时的工作目录。第三方许可资料位于 `bin/notices/`。
 
@@ -18,6 +18,16 @@
 - 浅蓝导航、白色工作区和蓝色操作按钮，下载、网盘、上传、分享及弹窗使用统一配色。
 - 移除原有游戏文案、角色立绘与切换功能，文件列表使用完整内容宽度。
 - 窗口标题栏、应用图标和托盘提示与通用下载工具风格保持一致；窄窗口及较低窗口高度下自动调整布局。
+
+## 设置与自动更新
+
+- 左侧「设置」分为四组：通用（下载目录、关闭窗口行为）、传输（全局限速、同时下载数、默认连接数）、外观（日间 / Night）与关于。
+- 所有改动即时保存：限速与同时下载数通过 aria2 的全局选项立即生效，正在下载的任务不会被中断；默认连接数用于之后新建的普通链接任务。
+- 全局限速填 0 表示不限速，单位为 KiB/s；也可点击 1 / 5 / 10 MiB/s 快捷项。同时下载数的可填范围是 1–10。
+- 「关于与更新」显示当前版本，可手动检查更新、查看进度并下载安装。安装完成后点击「立即重启」即可换到新版本，任务与登录状态都会保留。
+- 默认开启「启动时静默检查更新」，发现新版本时「设置」菜单会显示小圆点，不影响正在进行的下载。
+- 自动更新只对安装版生效：便携版和 `tauri dev` 开发模式不会自我替换，需要手动下载新包。
+- 「打开目录」可以直接定位到 `%APPDATA%\com.sixunited.clouddownloader`，其中保存账号配置、任务数据库与种子缓存。
 
 ## 个人网盘下载
 

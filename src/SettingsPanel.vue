@@ -1,0 +1,660 @@
+<script setup lang="ts">
+import { computed, ref, watch } from "vue";
+import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { version } from "../package.json";
+import {
+  CircleAlert,
+  CloudDownload,
+  Download,
+  ExternalLink,
+  FolderOpen,
+  LoaderCircle,
+  RefreshCw,
+  RotateCw,
+  Sparkles,
+  Check,
+  Sun,
+  Moon,
+} from "@lucide/vue";
+import {
+  type Settings,
+  connectionChoices,
+  limitPresets,
+  maxConcurrentDownloads,
+  maxDownloadLimit,
+} from "./settings";
+import { theme, setTheme } from "./theme";
+import {
+  checkForUpdates,
+  installUpdate,
+  restartForUpdate,
+  updateStatus,
+} from "./updater";
+
+const props = defineProps<{ settings: Settings }>();
+const emit = defineEmits<{
+  saved: [settings: Settings];
+  directory: [];
+  folder: [];
+  notice: [message: string];
+  error: [message: string];
+}>();
+
+const draft = ref<Settings>({ ...props.settings });
+const limitInput = ref(props.settings.maxOverallDownloadLimit);
+const concurrentInput = ref(props.settings.maxConcurrentDownloads);
+const saving = ref(false);
+
+watch(
+  () => props.settings,
+  (value) => {
+    draft.value = { ...value };
+    limitInput.value = value.maxOverallDownloadLimit;
+    concurrentInput.value = value.maxConcurrentDownloads;
+  },
+);
+
+async function apply(patch: Partial<Settings>) {
+  const next = { ...draft.value, ...patch };
+  draft.value = next;
+  saving.value = true;
+  try {
+    const saved = await invoke<Settings>("settings_set", { settings: next });
+    draft.value = { ...saved };
+    limitInput.value = saved.maxOverallDownloadLimit;
+    concurrentInput.value = saved.maxConcurrentDownloads;
+    emit("saved", saved);
+  } catch (error) {
+    draft.value = { ...props.settings };
+    limitInput.value = props.settings.maxOverallDownloadLimit;
+    concurrentInput.value = props.settings.maxConcurrentDownloads;
+    emit("error", String(error));
+  } finally {
+    saving.value = false;
+  }
+}
+
+function applyLimit() {
+  const parsed = Math.round(Number(limitInput.value) || 0);
+  const clamped = Math.min(Math.max(parsed, 0), maxDownloadLimit);
+  limitInput.value = clamped;
+  if (clamped !== draft.value.maxOverallDownloadLimit) {
+    void apply({ maxOverallDownloadLimit: clamped });
+  }
+}
+
+function setLimit(value: number) {
+  limitInput.value = value;
+  if (value !== draft.value.maxOverallDownloadLimit) {
+    void apply({ maxOverallDownloadLimit: value });
+  }
+}
+
+function applyConcurrent() {
+  const parsed = Math.round(Number(concurrentInput.value) || 0);
+  const clamped = Math.min(Math.max(parsed, 1), maxConcurrentDownloads);
+  concurrentInput.value = clamped;
+  if (clamped !== draft.value.maxConcurrentDownloads) {
+    void apply({ maxConcurrentDownloads: clamped });
+  }
+}
+
+const bytes = (n: number) => {
+  if (!n) return "0 B";
+  const units = ["B", "KiB", "MiB", "GiB"];
+  const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), 3);
+  return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`;
+};
+
+const checkedAt = computed(() =>
+  updateStatus.value.checkedAt
+    ? new Date(updateStatus.value.checkedAt).toLocaleTimeString("zh-CN", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "",
+);
+
+const title = computed(() => {
+  const status = updateStatus.value;
+  if (status.phase === "checking") return "正在检查更新…";
+  if (status.phase === "current") return "已是最新版本";
+  if (status.phase === "available") return `发现新版本 v${status.version}`;
+  if (status.phase === "downloading") return `正在下载 v${status.version}`;
+  if (status.phase === "ready") return `v${status.version} 已就绪`;
+  if (status.phase === "error") return status.error;
+  return "尚未检查更新";
+});
+
+const hint = computed(() => {
+  const status = updateStatus.value;
+  if (status.phase === "current") return `上次检查 ${checkedAt.value}`;
+  if (status.phase === "available")
+    return status.publishedAt
+      ? `发布于 ${status.publishedAt.slice(0, 10)}`
+      : "建议更新以获得最新修复";
+  if (status.phase === "downloading") {
+    return status.total
+      ? `${bytes(status.downloaded)} / ${bytes(status.total)}`
+      : bytes(status.downloaded);
+  }
+  if (status.phase === "ready") return "重启后自动完成安装";
+  if (status.phase === "error") return "可稍后重试，或到发布页手动下载";
+  return "连网后检查 GitHub Releases 上是否有新版本";
+});
+
+const percent = computed(() => {
+  const status = updateStatus.value;
+  if (!status.total) return 0;
+  return Math.min(100, Math.round((status.downloaded / status.total) * 100));
+});
+
+const busy = computed(
+  () => saving.value || updateStatus.value.phase === "checking",
+);
+
+function install() {
+  if (updateStatus.value.phase === "ready") return;
+  void installUpdate();
+}
+
+async function restart() {
+  try {
+    await restartForUpdate();
+  } catch (error) {
+    emit("error", String(error));
+  }
+}
+
+async function openDataDirectory() {
+  try {
+    await invoke("open_data_directory");
+  } catch (error) {
+    emit("error", String(error));
+  }
+}
+
+function openRepository() {
+  void openUrl("https://github.com/sclliang/CloudDownloader");
+}
+</script>
+
+<template>
+  <div class="settings">
+    <section class="settings-group card">
+      <div class="group-head">
+        <h2>通用</h2>
+        <p>下载位置与窗口行为</p>
+      </div>
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>下载目录</strong>
+          <small>新任务默认保存到这个文件夹</small>
+          <span class="setting-path" :title="draft.downloadDir">{{
+            draft.downloadDir || "尚未设置"
+          }}</span>
+        </div>
+        <div class="row-actions">
+          <button class="secondary" @click="emit('directory')">
+            <FolderOpen :size="15" />更改
+          </button>
+          <button class="text-button" @click="emit('folder')">打开</button>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>关闭窗口时</strong>
+          <small>{{
+            draft.closeAction === "tray"
+              ? "窗口收进托盘，下载继续进行"
+              : "退出程序会停止下载引擎，任务将在下次启动时暂停"
+          }}</small>
+        </div>
+        <div class="segmented" role="group" aria-label="关闭窗口时的行为">
+          <button
+            :class="{ selected: draft.closeAction === 'tray' }"
+            :aria-pressed="draft.closeAction === 'tray'"
+            :disabled="saving"
+            @click="apply({ closeAction: 'tray' })"
+          >
+            最小化到托盘
+          </button>
+          <button
+            :class="{ selected: draft.closeAction === 'exit' }"
+            :aria-pressed="draft.closeAction === 'exit'"
+            :disabled="saving"
+            @click="apply({ closeAction: 'exit' })"
+          >
+            退出程序
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-group card">
+      <div class="group-head">
+        <h2>传输</h2>
+        <p>立即生效，进行中的任务不受影响</p>
+      </div>
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>全局限速</strong>
+          <small>0 表示不限制带宽</small>
+        </div>
+        <div class="row-actions">
+          <input
+            v-model.number="limitInput"
+            class="number-input"
+            type="number"
+            min="0"
+            :max="maxDownloadLimit"
+            step="128"
+            aria-label="全局下载限速（KiB/s）"
+            @change="applyLimit"
+            @keydown.enter="applyLimit"
+          />
+          <span class="unit">KiB/s</span>
+        </div>
+      </div>
+      <div class="presets">
+        <button
+          v-for="preset in limitPresets"
+          :key="preset.value"
+          class="chip"
+          :class="{ active: draft.maxOverallDownloadLimit === preset.value }"
+          :disabled="saving"
+          @click="setLimit(preset.value)"
+        >
+          {{ preset.label }}
+        </button>
+      </div>
+      <div class="divider"></div>
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>同时下载数</strong>
+          <small>同时进行的任务数量（1–{{ maxConcurrentDownloads }}）</small>
+        </div>
+        <div class="row-actions">
+          <input
+            v-model.number="concurrentInput"
+            class="number-input"
+            type="number"
+            min="1"
+            :max="maxConcurrentDownloads"
+            step="1"
+            aria-label="同时下载的任务数量"
+            @change="applyConcurrent"
+            @keydown.enter="applyConcurrent"
+          />
+          <span class="unit">个</span>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>默认连接数</strong>
+          <small>新任务的分段连接数；服务器不支持分段时自动降为 1</small>
+        </div>
+        <div class="segmented" role="group" aria-label="默认连接数">
+          <button
+            v-for="choice in connectionChoices"
+            :key="choice"
+            :class="{ selected: draft.defaultConnections === choice }"
+            :aria-pressed="draft.defaultConnections === choice"
+            :disabled="saving"
+            @click="apply({ defaultConnections: choice })"
+          >
+            {{ choice }}
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-group card">
+      <div class="group-head">
+        <h2>外观</h2>
+        <p>主题会随窗口一起切换</p>
+      </div>
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>界面主题</strong>
+          <small>日间清爽，Night 适合弱光环境</small>
+        </div>
+        <div class="segmented" role="group" aria-label="界面主题">
+          <button
+            :class="{ selected: theme === 'light' }"
+            :aria-pressed="theme === 'light'"
+            @click="setTheme('light')"
+          >
+            <Sun :size="15" />日间
+          </button>
+          <button
+            :class="{ selected: theme === 'night' }"
+            :aria-pressed="theme === 'night'"
+            @click="setTheme('night')"
+          >
+            <Moon :size="15" />Night
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-group card">
+      <div class="group-head">
+        <h2>关于与更新</h2>
+        <p>CloudDownloader v{{ version }} · Windows 10/11 x64</p>
+      </div>
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>自动检查更新</strong>
+          <small>启动时静默检查，发现新版本会在「设置」上标记</small>
+        </div>
+        <button
+          class="switch"
+          role="switch"
+          :aria-checked="draft.autoCheckUpdates"
+          aria-label="自动检查更新"
+          :disabled="saving"
+          @click="apply({ autoCheckUpdates: !draft.autoCheckUpdates })"
+        >
+          <span></span>
+        </button>
+      </div>
+      <div class="update-box" :class="updateStatus.phase">
+        <div class="update-main">
+          <LoaderCircle
+            v-if="
+              updateStatus.phase === 'checking' ||
+              updateStatus.phase === 'downloading'
+            "
+            :size="18"
+            class="spinning"
+          />
+          <CircleAlert v-else-if="updateStatus.phase === 'error'" :size="18" />
+          <Check v-else-if="updateStatus.phase === 'current'" :size="18" />
+          <Sparkles v-else-if="updateStatus.phase === 'available'" :size="18" />
+          <CloudDownload v-else-if="updateStatus.phase === 'ready'" :size="18" />
+          <RefreshCw v-else :size="18" />
+          <div>
+            <strong>{{ title }}</strong>
+            <small>{{ hint }}</small>
+          </div>
+        </div>
+        <div class="update-actions">
+          <button
+            v-if="updateStatus.phase !== 'available' && updateStatus.phase !== 'ready'"
+            class="secondary"
+            :disabled="busy || updateStatus.phase === 'downloading'"
+            @click="checkForUpdates()"
+          >
+            <RefreshCw
+              :size="15"
+              :class="{ spinning: updateStatus.phase === 'checking' }"
+            />{{ updateStatus.phase === "current" ? "重新检查" : "检查更新" }}
+          </button>
+          <button
+            v-else-if="updateStatus.phase === 'available'"
+            class="primary"
+            :disabled="updateStatus.phase !== 'available'"
+            @click="install"
+          >
+            <Download :size="15" />下载并安装
+          </button>
+          <button v-else class="primary" @click="restart">
+            <RotateCw :size="15" />立即重启
+          </button>
+          <button
+            v-if="updateStatus.phase === 'available'"
+            class="text-button"
+            @click="checkForUpdates()"
+          >
+            稍后
+          </button>
+        </div>
+        <div
+          v-if="updateStatus.phase === 'downloading'"
+          class="update-progress"
+        >
+          <span :style="{ width: `${percent}%` }"></span>
+        </div>
+        <p
+          v-if="updateStatus.notes && updateStatus.phase === 'available'"
+          class="release-notes"
+        >
+          {{ updateStatus.notes }}
+        </p>
+      </div>
+      <div class="divider"></div>
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>本地数据</strong>
+          <small>账号配置、任务数据库与种子缓存</small>
+        </div>
+        <button class="secondary" @click="openDataDirectory">
+          <FolderOpen :size="15" />打开目录
+        </button>
+      </div>
+      <div class="divider"></div>
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>开源仓库</strong>
+          <small>问题反馈与版本说明</small>
+        </div>
+        <button class="secondary" @click="openRepository">
+          <ExternalLink :size="15" />sclliang/CloudDownloader
+        </button>
+      </div>
+    </section>
+  </div>
+</template>
+
+<style scoped>
+.settings {
+  columns: 2;
+  column-gap: 16px;
+  padding-bottom: 12px;
+}
+.settings-group {
+  break-inside: avoid;
+  margin-bottom: 16px;
+  padding: 18px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+@media (max-width: 980px) {
+  .settings {
+    columns: 1;
+  }
+}
+.group-head h2 {
+  margin: 0 0 3px;
+  font-size: 15px;
+}
+.group-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+.setting-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.setting-copy strong {
+  font-size: 13px;
+}
+.setting-copy small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.setting-path {
+  color: var(--muted);
+  font-size: 12px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.divider {
+  height: 1px;
+  background: var(--line);
+}
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  flex-shrink: 0;
+}
+.segmented button {
+  padding: 6px 11px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+}
+.segmented button.selected {
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: 0 1px 4px #182c4314;
+}
+.number-input {
+  width: 100px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  text-align: right;
+}
+.unit {
+  color: var(--muted);
+  font-size: 12px;
+}
+.presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: -6px;
+}
+.chip {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 12px;
+}
+.chip.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.switch {
+  width: 44px;
+  height: 24px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--line);
+  justify-content: flex-start;
+  flex-shrink: 0;
+}
+.switch span {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px #182c4326;
+  transition: transform 0.16s;
+}
+.switch[aria-checked="true"] {
+  background: var(--accent);
+}
+.switch[aria-checked="true"] span {
+  transform: translateX(20px);
+}
+.update-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+.update-box.error {
+  border-color: #f0c9c9;
+  background: var(--danger-soft);
+}
+.update-box.available,
+.update-box.ready {
+  border-color: #cfe3fb;
+  background: var(--accent-soft);
+}
+.update-main {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  color: var(--ink);
+}
+.update-main strong {
+  display: block;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.update-main small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.update-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+.update-progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+.release-notes {
+  margin: 0;
+  max-height: 96px;
+  overflow: auto;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.spinning {
+  animation: settings-spin 1s linear infinite;
+}
+@keyframes settings-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+</style>

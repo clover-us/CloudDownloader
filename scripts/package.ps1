@@ -115,6 +115,20 @@ VIAddVersionKey /LANG=1033 "OriginalFilename" "__INSTALLER_FILENAME__"
     $installerNumeric = '{0}.{1}.{2}.{3}' -f $installerMetadata.FileMajorPart, $installerMetadata.FileMinorPart, $installerMetadata.FileBuildPart, $installerMetadata.FilePrivatePart
     if ($installerNumeric -ne $version) { throw '安装包数字版本检查失败' }
 
+    # Tauri 只为 bundle 里的安装包签名，而这里重新编译时改写了版本资源，两者字节并不相同。
+    # 因此必须对最终交付的安装包重新签名，否则自动更新会因签名不匹配而拒绝安装。
+    if ($env:TAURI_SIGNING_PRIVATE_KEY) {
+        $signer = Join-Path $projectRoot 'node_modules\@tauri-apps\cli\tauri.js'
+        if (-not (Test-Path -LiteralPath $signer)) { throw '找不到 Tauri CLI，无法为安装包签名' }
+        Push-Location $projectRoot
+        try {
+            & node $signer signer sign $installerPath
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath "$installerPath.sig")) { throw '安装包签名失败' }
+        } finally { Pop-Location }
+    } else {
+        Write-Warning '未提供 TAURI_SIGNING_PRIVATE_KEY，跳过安装包签名；自动更新将无法使用该安装包。'
+    }
+
     # Publish only the portable payload, never old installers or local test data.
     $expectedBin = @('aria2c.exe') + @(Get-ChildItem -LiteralPath (Join-Path $projectRoot 'third-party\notices') -File | ForEach-Object { 'notices\' + $_.Name })
     $actualBin = @(Get-ChildItem -LiteralPath (Join-Path $packageRoot 'bin') -Recurse -File | ForEach-Object { $_.FullName.Substring((Join-Path $packageRoot 'bin').Length + 1) })

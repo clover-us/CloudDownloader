@@ -1771,3 +1771,13 @@ button.directory:hover {
     animation: none;
   }
 }
+
+/* 设置入口的新版本提示点 */
+.sidebar nav button .nav-dot {
+  margin-left: auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}

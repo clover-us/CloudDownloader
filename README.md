@@ -27,12 +27,12 @@
 
 ## 下载
 
-最新版本 **0.5.7**：全新蓝白界面与深灰 Night 主题，统一管理直链、网盘和 BT 下载。
+最新版本 **0.6.0**：新增设置中心与自动更新，下载参数、窗口行为和版本升级都能在应用内完成。
 
 | Windows 安装版 · 推荐                 | 便携版                                 |
 | :------------------------------------ | :------------------------------------- |
 | 自动创建快捷方式，适合日常使用。      | 解压即可运行，保留完整目录结构。       |
-| **[↓ 下载 v0.5.7 安装包][installer]** | **[↓ 下载 v0.5.7 便携 ZIP][portable]** |
+| **[↓ 下载 v0.6.0 安装包][installer]** | **[↓ 下载 v0.6.0 便携 ZIP][portable]** |
 
 [全部版本与更新说明][releases] · [SHA-256 校验文件][checksums]
 
@@ -65,6 +65,8 @@
 | **BT 磁力与种子**       | 支持 v1 / 混合种子、选文件下载、节点数设置、上传限速和可选做种。 |
 | **百度上传与分享**      | 分片上传、拖放文件、新建文件夹、创建分享与管理本机分享记录。     |
 | **日间 / Night 双主题** | 右上角一键切换并记住选择；关闭窗口后可在托盘继续下载。           |
+| **设置中心**            | 下载目录、全局限速、同时下载数与默认连接数，改动即时生效。       |
+| **应用内自动更新**      | 启动时检查新版本，下载签名校验通过的安装包并自动重启完成升级。   |
 | **按需清理本地文件**    | 删除任务时自行选择是否删除本地文件，默认保留。                   |
 
 ## 支持的网盘
@@ -88,7 +90,7 @@
 2. **粘贴链接**：在「新建下载」粘贴文件直链、网盘分享文字或 `magnet:` 链接，点击「解析链接」；本地 `.torrent` 文件使用「导入种子」。
 3. **确认下载**：预览并选择文件，检查保存目录，点击「开始下载」。个人网盘文件可直接在「我的网盘」中选择。
 
-主题按钮位于右上角、最小化按钮左侧。关闭窗口会收进托盘；需要完全退出时，在托盘菜单中选择「退出程序」。
+主题按钮位于右上角、最小化按钮左侧。默认关闭窗口会收进托盘；需要完全退出时，在托盘菜单中选择「退出程序」，或在「设置 → 通用」里把关闭行为改为「退出程序」。
 
 [查看完整使用指南 →](docs/usage.md)
 
@@ -135,7 +137,7 @@ npm run tauri dev -- --no-watch
 
 ## 文档与致谢
 
-[使用指南](docs/usage.md) · [开发文档](docs/development.md) · [验证记录](VERIFICATION.md) · [更新说明](docs/release-0.5.7.md) · [第三方许可](third-party/notices/)
+[使用指南](docs/usage.md) · [开发文档](docs/development.md) · [验证记录](VERIFICATION.md) · [更新说明](docs/release-0.6.0.md) · [第三方许可](third-party/notices/)
 
 界面布局与蓝白配色参考 [Motrix](https://github.com/agalwood/Motrix)，保留本项目的统一下载入口与多网盘工作区。
 
@@ -143,7 +145,7 @@ npm run tauri dev -- --no-watch
 
 <p align="center"><sub>sixunited · 作者 <a href="https://github.com/sclliang">sclliang</a></sub></p>
 
-[installer]: https://github.com/sclliang/CloudDownloader/releases/download/v0.5.7/CloudDownloader_0.5.7_x64-setup.exe
-[portable]: https://github.com/sclliang/CloudDownloader/releases/download/v0.5.7/CloudDownloader-0.5.7-win-x64.zip
-[checksums]: https://github.com/sclliang/CloudDownloader/releases/download/v0.5.7/SHA256SUMS-0.5.7.txt
+[installer]: https://github.com/sclliang/CloudDownloader/releases/download/v0.6.0/CloudDownloader_0.6.0_x64-setup.exe
+[portable]: https://github.com/sclliang/CloudDownloader/releases/download/v0.6.0/CloudDownloader-0.6.0-win-x64.zip
+[checksums]: https://github.com/sclliang/CloudDownloader/releases/download/v0.6.0/SHA256SUMS-0.6.0.txt
 [releases]: https://github.com/sclliang/CloudDownloader/releases

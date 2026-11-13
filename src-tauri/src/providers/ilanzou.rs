@@ -14,7 +14,7 @@ pub(super) fn aes_hex(plain: &str) -> String {
     let mut bytes = plain.as_bytes().to_vec();
     let padding = 16 - bytes.len() % 16;
     bytes.resize(bytes.len() + padding, padding as u8);
-    for block in bytes.chunks_exact_mut(16) {
+    for block in bytes.as_chunks_mut::<16>().0 {
         cipher.encrypt_block(block.into());
     }
     bytes.iter().map(|b| format!("{b:02x}")).collect()
