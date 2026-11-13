@@ -6,6 +6,35 @@ use tauri::{Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 static PAN115_INITIALIZATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static ILANZOU_DEVICE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+// The provider sites are desktop layouts with their own minimum widths
+// (1024-1280 CSS pixels). A fixed window width therefore clipped the right
+// edge of some login pages while others fitted, so the same rule now applies
+// to every provider: scale the page as a whole until it fits the window.
+const FIT_TO_WIDTH: &str = r#"
+(() => {
+  const fit = () => {
+    const html = document.documentElement;
+    if (!html) return;
+    html.style.zoom = '';
+    const viewport = html.clientWidth;
+    const needed = Math.max(html.scrollWidth, document.body ? document.body.scrollWidth : 0);
+    if (viewport > 0 && needed > viewport + 1) {
+      html.style.zoom = String(Math.max(0.5, viewport / needed));
+    }
+  };
+  const schedule = () => {
+    fit();
+    setTimeout(fit, 300);
+    setTimeout(fit, 1200);
+    setTimeout(fit, 3000);
+  };
+  addEventListener('DOMContentLoaded', fit, { once: true });
+  addEventListener('resize', schedule);
+  if (document.readyState === 'complete') schedule();
+  else addEventListener('load', schedule, { once: true });
+})();
+"#;
+
 pub fn window(
     app: &tauri::AppHandle,
     provider: Provider,
@@ -50,6 +79,7 @@ pub fn window(
     .title(format!("登录{} · CloudDownloader", provider.name()))
     .inner_size(1000.0, 740.0)
     .min_inner_size(800.0, 600.0)
+    .initialization_script(FIT_TO_WIDTH)
     .center()
     .visible(visible)
     .data_directory(path)
