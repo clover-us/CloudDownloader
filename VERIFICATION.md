@@ -1,37 +1,48 @@
-# CloudDownloader 0.6.0 验证记录
+# CloudDownloader 0.6.1 验证记录
 
-验证日期：2026-11-14，Asia/Shanghai。发布版本：[v0.6.0](https://github.com/sclliang/CloudDownloader/releases/tag/v0.6.0)，提供 Windows 安装版、便携版与 SHA-256 校验文件。上一版验证见 [0.5.7](docs/verification-0.5.7.md)，更新内容见 [0.6.0 更新说明](docs/release-0.6.0.md)。
+验证日期：2026-11-14，Asia/Shanghai。发布版本：[v0.6.1](https://github.com/clover-us/CloudDownloader/releases/tag/v0.6.1)，提供 Windows 安装版、便携版与 SHA-256 校验文件。上一版验证见 [0.6.0](docs/verification-0.6.0.md)，更新内容见 [0.6.1 更新说明](docs/release-0.6.1.md)。
 
 ## 本次修改
 
-- 新增「设置」页，分为通用、传输、外观、关于与更新四组；可从侧栏进入，设置项包括下载目录、关闭窗口行为、全局限速、同时下载数、默认连接数、界面主题与自动检查更新。
-- 设置写入任务数据库的 `settings` 表，启动时读入并作为 aria2 启动参数；修改限速与同时下载数后立即通过 `aria2.changeGlobalOption` 应用到运行中的引擎，不中断已有任务。
-- 关闭窗口行为可配置：默认收进托盘继续下载；选择「退出程序」时先保存 115 会话，再退出主程序与 aria2 子进程。
-- 新增自动更新：启动时静默检查 GitHub Releases 上的 `latest.json`，发现新版本在侧栏「设置」显示圆点，可在设置页下载、安装并重启；更新包使用 minisign 公钥校验签名。
-- 构建产出 `.sig` 签名与 `latest.json` 清单，发布脚本自动读取本地私钥，并在打包后生成清单。
-- 版本号统一升级到 0.6.0；同时修复 rustc 1.100 下 clippy 报出的既有告警（多余借用、循环内重复编译正则、手写除法检查等），不改变运行行为。
+- 修复网盘登录窗口显示不完整：之前八个网盘共用固定 1000 × 740 的登录窗口，而各家桌面版页面的布局宽度在 1000–1275 像素之间，导致其中七家的右侧内容被窗口边缘裁掉。
+- 登录窗口统一注入一段初始化脚本（`src-tauri/src/session.rs` 的 `FIT_TO_WIDTH`，通过 `.initialization_script()` 挂到每个 provider 的窗口）：页面加载后测量 `html.clientWidth` 与实际内容宽度，按 `viewport / needed` 等比缩小整页（最小 0.5 倍），并清空上一次的缩放值后重新测量。
+- 缩放在 `DOMContentLoaded`、`load`、窗口尺寸变化时触发，并在加载后 300 ms、1200 ms、3000 ms 复测，覆盖字体与图片晚到造成的布局变化。
+- 所有网盘走同一段脚本与同一套判定，不再依赖各站点自己的横向滚动条样式，因此不会再出现「有的有滚动条、有的直接截断」。
+- 窗口尺寸、登录流程、Cookie 与会话读取逻辑均未改动；设置中心、自动更新等 0.6.0 功能保持不变。
 
 ## 功能验证
 
-- 设置页在真实 WebView2 窗口中逐项操作通过：四组卡片渲染正确，下载目录显示当前路径且「更改／打开」可用；关闭行为分段切换时说明文案同步变化；限速数字框与 1／5／10 MiB/s 快捷项联动；同时下载数只能取 1–10；默认连接数只在 1／4／8／16 中选择；日间与 Night 切换后窗口背景、侧栏、卡片与控件配色一致。
-- 即时生效：设为 5 MiB/s 后 `aria2.getGlobalOption` 返回 `max-overall-download-limit=5242880`；同时下载数改为 4 后返回 4；改回不限速与 3 后返回 0 与 3。全程没有中断已存在的任务。
-- 持久化：重启程序后设置页仍显示上次的选择，aria2 启动参数为 `--max-overall-download-limit=5120K` 与 `--max-concurrent-downloads=3`，且不再出现重复参数。
-- 关闭行为：选择「退出程序」后关闭窗口，主程序与 aria2 子进程均退出；选择「最小化到托盘」后进程保留、窗口隐藏，再次启动程序时由单实例机制恢复原窗口。
-- 自动更新：未发布清单时点击「检查更新」提示「尚未发布可用的更新清单，请稍后再试。」；启动时的静默检查失败不改变界面状态，设置页保持「尚未检查更新」。
-- 主题：Night 与日间来回切换，标题栏按钮、窗口背景与设置页控件同步变化，选择保存在本地存储。
-- 未新增或修改下载协议逻辑；0.5.7 的直链、网盘与 BT 端到端能力沿用既有测试。
+修复前（固定 1000 px 窗口，读取页面 Document 的横向视图占比换算出的布局宽度）：
+
+| 网盘 | 横向视图占比 | 实际布局宽度 | 结果 |
+| --- | --- | --- | --- |
+| 蓝奏云 | 100% | 1000 | 完整显示 |
+| 139 云盘 | 97.66% | 1024 | 右侧被裁 |
+| 夸克网盘 | 95.06% | 1052 | 右侧被裁 |
+| 115 网盘 | 91.32% | 1095 | 右侧被裁 |
+| 123 云盘 | 82.30% | 1215 | 右侧被裁 |
+| 蓝奏云优享版 | 82.30% | 1215 | 右侧被裁 |
+| 百度网盘 | 79.37% | 1260 | 右侧被裁 |
+| UC 网盘 | 78.43% | 1275 | 右侧被裁 |
+
+修复后在同一个安装包（`package/CloudDownloader.exe`，0.6.1）上逐个打开八个登录窗口，读取同一个可访问性属性：
+
+- 八个窗口全部为 `HorizontalViewSize = 100%`、`HorizontallyScrollable = False`，`Document` 尺寸仍为 1000 × 740。
+- 截图确认夸克与 UC（修复前需求宽度最大的两家）的右侧菜单、表格列与二维码面板完整可见，页面按比例缩小后文字与控件不变形。
+- 登录窗口的标题、所属账号 profile 目录、Cookie 读取与保存路径未变；修复只影响渲染缩放。
 
 ## 验证范围
 
-- 未使用真实网盘账号做登录与下载回归；各网盘的账号与传输能力沿用 0.5.7 的验证记录。
-- 自动更新的「下载—安装—重启」完整链路需要先发布 0.6.0，并在已安装的 0.6.0 上由后续版本触发；本轮验证到检查更新、签名产物与清单生成为止。
-- 未做旧版本覆盖安装验证；任务数据库结构未变，0.5.x 的任务与账号资料理论上可直接沿用。
-- 界面检查基于本机 1196×831 窗口与 100% 缩放，未覆盖多视口布局矩阵。
+- 未使用真实网盘账号完成登录后的网盘浏览与下载回归；本次只验证登录窗口的渲染与尺寸适配。账号与传输能力沿用 0.6.0 / 0.5.7 的验证记录。
+- 界面检查基于本机 96 DPI、100% 缩放；未覆盖系统缩放 125% / 150% 与多显示器混合 DPI。
+- 缩放上限固定为 0.5 倍、下限为 1 倍（内容比窗口窄时不放大），若之后某个网盘改版后布局宽度超过 2000 像素，会触到 0.5 倍下限并重新出现横向滚动。
+- 自动更新的「下载—安装—重启」完整链路仍未在真实旧版本上跑通；签名产物与清单的匹配关系已在本地核对。
 
 ## 构建与交付
 
 - `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 与 `cargo test --lib` 通过：69 passed / 0 failed / 1 ignored（需要真实分享链接的用例被忽略）。
-- `npm run build`（`vue-tsc` + Vite 生产构建）通过。
-- 带签名的 Windows release 与 NSIS 构建通过，打包脚本核对了主程序与安装包的版本资源；最终交付的安装包是重新编译并改写版本资源的那一份，脚本对它单独签名，`CloudDownloader_0.6.0_x64-setup.exe.sig` 与 `latest.json` 中的签名一致。
-- 交付文件：package/CloudDownloader.exe（11.0 MiB）、package/CloudDownloader_0.6.0_x64-setup.exe（5.65 MiB）、package/CloudDownloader_0.6.0_x64-setup.exe.sig、package/CloudDownloader-0.6.0-win-x64.zip（7.4 MiB）、package/SHA256SUMS-0.6.0.txt、package/latest.json；SHA-256 校验文件覆盖安装包与 ZIP。
-- 本轮未安装或卸载用户已有的 0.5.x 应用，升级路径留给正式发布后的自动更新验证。
+- `npm run build`（`vue-tsc` + Vite 生产构建）通过：1917 modules，CSS 33.66 kB、JS 179.68 kB。
+- 带签名的 Windows release 与 NSIS 构建通过，打包脚本核对了主程序版本资源（0.6.1.0）；最终交付的安装包由 makensis 重编译并单独签名，`.sig` 与 `latest.json` 中的签名一致。
+- 交付文件：package/CloudDownloader.exe（11.01 MiB）、package/CloudDownloader_0.6.1_x64-setup.exe（5.66 MiB）、package/CloudDownloader_0.6.1_x64-setup.exe.sig、package/CloudDownloader-0.6.1-win-x64.zip（7.38 MiB）、package/SHA256SUMS-0.6.1.txt、package/latest.json。
+- 安装包 SHA-256 `d457f2b8a29abd798c130c8f9bef125ee774b92dfec920c716adbf429069859f`，便携 ZIP SHA-256 `6807a0eace064aacb2ada147ef0f659bfe87fb38dc2a33a42a2c3a60ba1faba4`，与 SHA256SUMS-0.6.1.txt 一致。
+- 本轮未安装或卸载用户已有的 0.6.0 应用，升级路径留给发布后的自动更新验证。
