@@ -6,34 +6,90 @@ use tauri::{Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 static PAN115_INITIALIZATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static ILANZOU_DEVICE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-// The provider sites are desktop layouts with their own minimum widths
-// (1024-1280 CSS pixels). A fixed window width therefore clipped the right
-// edge of some login pages while others fitted, so the same rule now applies
-// to every provider: scale the page as a whole until it fits the window.
-const FIT_TO_WIDTH: &str = r#"
+// Provider login pages are desktop layouts with their own minimum widths, and
+// each site ships its own scrollbar styling. Both are unified here: every
+// login window opens wide enough for its page at 100% zoom, and every
+// scrollbar uses the same thin rounded style.
+const SCROLLBAR_STYLE: &str = r#"
 (() => {
-  const fit = () => {
-    const html = document.documentElement;
-    if (!html) return;
-    html.style.zoom = '';
-    const viewport = html.clientWidth;
-    const needed = Math.max(html.scrollWidth, document.body ? document.body.scrollWidth : 0);
-    if (viewport > 0 && needed > viewport + 1) {
-      html.style.zoom = String(Math.max(0.5, viewport / needed));
+  const css = `
+    *, *::before, *::after {
+      scrollbar-width: auto !important;
+      scrollbar-color: auto !important;
     }
+    ::-webkit-scrollbar { display: block !important; width: 10px !important; height: 10px !important; background: transparent !important; }
+    ::-webkit-scrollbar-track { background: transparent !important; }
+    ::-webkit-scrollbar-thumb {
+      background-color: rgba(112, 124, 142, 0.45) !important;
+      border: 2px solid transparent !important;
+      border-radius: 6px !important;
+      background-clip: content-box !important;
+      min-height: 40px !important;
+    }
+    ::-webkit-scrollbar-thumb:hover { background-color: rgba(112, 124, 142, 0.72) !important; }
+    ::-webkit-scrollbar-corner { background: transparent !important; }
+    ::-webkit-scrollbar-button { display: none !important; width: 0 !important; height: 0 !important; }
+  `;
+  const apply = () => {
+    if (!document.documentElement) return;
+    try {
+      if (!document.adoptedStyleSheets.some((sheet) => sheet.__clouddownloader)) {
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync(css);
+        Object.defineProperty(sheet, '__clouddownloader', { value: true });
+        document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+      }
+      return;
+    } catch (error) {
+      // Older engines fall back to a plain style element below.
+    }
+    const id = 'clouddownloader-scrollbars';
+    let style = document.getElementById(id);
+    if (!style) {
+      style = document.createElement('style');
+      style.id = id;
+      (document.head || document.documentElement).appendChild(style);
+    }
+    style.textContent = css;
   };
   const schedule = () => {
-    fit();
-    setTimeout(fit, 300);
-    setTimeout(fit, 1200);
-    setTimeout(fit, 3000);
+    apply();
+    setTimeout(apply, 300);
+    setTimeout(apply, 1200);
+    setTimeout(apply, 3000);
   };
-  addEventListener('DOMContentLoaded', fit, { once: true });
-  addEventListener('resize', schedule);
-  if (document.readyState === 'complete') schedule();
-  else addEventListener('load', schedule, { once: true });
-})();
-"#;
+  if (document.readyState === 'loading') {
+    addEventListener('DOMContentLoaded', schedule, { once: true });
+  } else {
+    schedule();
+  }
+  addEventListener('load', schedule, { once: true });
+  new MutationObserver(apply).observe(document.documentElement, { childList: true, subtree: false });
+})();"#;
+
+// Width each login page needs, measured on the live sites at 100% zoom, plus
+// room for the scrollbar. Rendering at the native size keeps the desktop
+// layout intact; a page that grows wider falls back to its own scrollbar.
+fn login_size(app: &tauri::AppHandle, provider: Provider) -> (f64, f64) {
+    let mut width: f64 = match provider {
+        Provider::Lanzou => 1024.0,
+        Provider::C139 => 1044.0,
+        Provider::Quark => 1072.0,
+        Provider::Pan115 => 1116.0,
+        Provider::Pan123 | Provider::Ilanzou => 1236.0,
+        Provider::Baidu => 1280.0,
+        Provider::Uc => 1296.0,
+    };
+    if let Ok(Some(monitor)) = app.primary_monitor() {
+        let available = monitor
+            .size()
+            .to_logical::<f64>(monitor.scale_factor())
+            .width
+            - 48.0;
+        width = width.min(available.max(800.0));
+    }
+    (width, 740.0)
+}
 
 pub fn window(
     app: &tauri::AppHandle,
@@ -63,6 +119,7 @@ pub fn window(
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join(format!("{}-profile", provider.key()));
+    let (width, height) = login_size(app, provider);
     let window = WebviewWindowBuilder::new(
         app,
         label,
@@ -77,9 +134,9 @@ pub fn window(
         ),
     )
     .title(format!("登录{} · CloudDownloader", provider.name()))
-    .inner_size(1000.0, 740.0)
+    .inner_size(width, height)
     .min_inner_size(800.0, 600.0)
-    .initialization_script(FIT_TO_WIDTH)
+    .initialization_script(SCROLLBAR_STYLE)
     .center()
     .visible(visible)
     .data_directory(path)
