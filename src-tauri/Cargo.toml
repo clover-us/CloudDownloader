@@ -1,6 +1,6 @@
 [package]
 name = "clouddownloader"
-version = "0.6.1"
+version = "0.6.2"
 description = "Cloud file and transfer manager for Windows"
 authors = ["sclliang"]
 edition = "2021"
