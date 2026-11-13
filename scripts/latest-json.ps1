@@ -1,5 +1,7 @@
 ﻿param(
-    [string]$Notes = ''
+    [string]$Notes = '',
+    # 安装包实际发布到的仓库。默认是本仓库的 fork；向原作者仓库发布时传 -Repository sclliang/CloudDownloader。
+    [string]$Repository = 'clover-us/CloudDownloader'
 )
 # 生成 Tauri 自动更新清单 latest.json。
 # 用法：powershell -ExecutionPolicy Bypass -File scripts/latest-json.ps1
@@ -39,7 +41,7 @@ $signatureFile = "$($installer.FullName).sig"
 if (-not (Test-Path $signatureFile)) { throw '缺少安装包签名文件（.sig），请确认打包时已提供签名私钥。' }
 
 $signature = (Get-Content $signatureFile -Raw).Trim()
-$url = "https://github.com/sclliang/CloudDownloader/releases/download/v$version/$($installer.Name)"
+$url = "https://github.com/$Repository/releases/download/v$version/$($installer.Name)"
 $platform = @{
     signature = $signature
     url       = $url
