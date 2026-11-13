@@ -32,6 +32,16 @@ const state = {
   refreshDelayMs: Number((window as any).__MOCK_SLOW__ || 0),
 };
 
+// Mirrors src/settings.ts defaultSettings (feat merge).
+const settings = {
+  downloadDir: "D:\\Downloads",
+  maxOverallDownloadLimit: 0,
+  maxConcurrentDownloads: 3,
+  defaultConnections: 16,
+  closeAction: "tray",
+  autoCheckUpdates: true,
+};
+
 const account = (p: Provider) =>
   state.loggedIn[p]
     ? {
@@ -130,6 +140,7 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
       engineError: "",
       uploads: [],
       shares: [],
+      settings: { ...settings },
     };
   }
   if (cmd === "refresh_account") {
@@ -163,6 +174,15 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
       files: driveFiles("baidu"),
     };
   }
+  // feat merge: settings + in-app updater.
+  if (cmd === "settings_get") return { ...settings };
+  if (cmd === "settings_set") {
+    Object.assign(settings, args.settings);
+    return { ...settings };
+  }
+  if (cmd === "open_data_directory") return null;
+  if (cmd === "plugin:updater|check") return null; // no update available
+  if (cmd.startsWith("plugin:process|")) return null;
   return null;
 }
 

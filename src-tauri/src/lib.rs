@@ -12,6 +12,7 @@ mod pan115_session;
 mod providers;
 mod quark;
 mod session;
+mod settings;
 mod store;
 mod task_removal;
 mod tray;
@@ -22,6 +23,7 @@ mod verification;
 use engine::{Engine, Rpc};
 use model::*;
 use serde_json::json;
+use settings::Settings;
 use std::{
     collections::HashSet,
     path::PathBuf,
@@ -170,14 +172,16 @@ fn snapshot(window: WebviewWindow, state: State<'_, AppState>) -> Result<Snapsho
         .unwrap()
         .as_mut()
         .is_some_and(Engine::alive);
+    let settings = Settings::load(&store);
     Ok(Snapshot {
         accounts: state.accounts.lock().unwrap().clone(),
         tasks: store.tasks()?,
-        download_dir: store.setting("download_dir").unwrap_or_default(),
+        download_dir: settings.download_dir.clone(),
         engine_running,
         engine_error: state.engine_error.lock().unwrap().clone(),
         uploads: store.uploads()?.into_iter().map(Into::into).collect(),
         shares: store.shares()?,
+        settings,
     })
 }
 
@@ -197,6 +201,30 @@ fn set_directory(
         .lock()
         .unwrap()
         .set_setting("download_dir", &path)
+}
+
+#[tauri::command]
+fn settings_get(window: WebviewWindow, state: State<'_, AppState>) -> Result<Settings, String> {
+    trusted(&window)?;
+    Ok(Settings::load(&state.store.lock().unwrap()))
+}
+
+/// 保存偏好设置，并立即把限速、同时下载数同步给下载引擎。
+#[tauri::command]
+async fn settings_set(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    settings: Settings,
+) -> Result<Settings, String> {
+    trusted(&window)?;
+    let saved = {
+        let store = state.store.lock().unwrap();
+        crate::settings::save(&store, &settings)?
+    };
+    if let Ok(rpc) = rpc(&state) {
+        let _ = rpc.change_global_options(&saved.aria2_options()).await;
+    }
+    Ok(saved)
 }
 
 async fn start_task(
@@ -508,6 +536,16 @@ fn open_directory(
     tauri_plugin_opener::open_path(path, None::<&str>).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn open_data_directory(window: WebviewWindow, app: tauri::AppHandle) -> Result<(), String> {
+    trusted(&window)?;
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "无法定位程序数据目录")?;
+    tauri_plugin_opener::open_path(dir, None::<&str>).map_err(|e| e.to_string())
+}
+
 async fn poll_engine(app: tauri::AppHandle) {
     loop {
         tokio::time::sleep(Duration::from_millis(1000)).await;
@@ -630,19 +668,21 @@ fn bt_progress(source: &BtSource, value: &serde_json::Value) -> (u64, u64) {
     };
     let mut completed = 0;
     let mut offset = 0;
-    if source.piece_length > 0 {
-        for file in &source.files {
-            let end = offset + file.size;
-            if file.size > 0 && selected.contains(&file.index) {
-                for piece in offset / source.piece_length..end.div_ceil(source.piece_length) {
-                    if verified(piece) {
-                        completed += end.min((piece + 1) * source.piece_length)
-                            - offset.max(piece * source.piece_length);
-                    }
+    for file in &source.files {
+        let end = offset + file.size;
+        // piece_length 为 0 表示种子缺少分片信息，此时无法按分片统计。
+        let Some(first) = offset.checked_div(source.piece_length) else {
+            break;
+        };
+        if file.size > 0 && selected.contains(&file.index) {
+            for piece in first..end.div_ceil(source.piece_length) {
+                if verified(piece) {
+                    completed += end.min((piece + 1) * source.piece_length)
+                        - offset.max(piece * source.piece_length);
                 }
             }
-            offset = end;
         }
+        offset = end;
     }
     (size, completed)
 }
@@ -654,6 +694,8 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             tray::setup(app)?;
             let dir = app.path().app_data_dir()?;
@@ -689,7 +731,8 @@ pub fn run() {
                 upload.speed = 0;
                 store.save_upload(&upload)?;
             }
-            let (engine, engine_error) = match Engine::start() {
+            let preferences = Settings::load(&store);
+            let (engine, engine_error) = match Engine::start_with(&preferences) {
                 Ok(v) => (Some(v), String::new()),
                 Err(e) => (None, e),
             };
@@ -717,7 +760,17 @@ pub fn run() {
                 main.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
-                        if let Some(window) = handle.get_webview_window("main") {
+                        let exit = handle
+                            .state::<AppState>()
+                            .store
+                            .lock()
+                            .unwrap()
+                            .setting("close_action")
+                            .as_deref()
+                            == Some("exit");
+                        if exit {
+                            handle.exit(0);
+                        } else if let Some(window) = handle.get_webview_window("main") {
                             let _ = window.hide();
                         }
                     }
@@ -746,6 +799,8 @@ pub fn run() {
             parse_link,
             snapshot,
             set_directory,
+            settings_get,
+            settings_set,
             enqueue,
             direct_commands::enqueue_direct,
             download_commands::inspect_download,
@@ -754,6 +809,7 @@ pub fn run() {
             download_commands::enqueue_bt,
             task_action,
             open_directory,
+            open_data_directory,
             drive_commands::drive_list,
             cloud_commands::cloud_list,
             cloud_commands::cloud_enqueue,

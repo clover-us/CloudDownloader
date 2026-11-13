@@ -192,6 +192,14 @@ await shot("12-account-narrow");
 const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
 check("H1 no horizontal overflow at 920px", !overflow);
 
+// --- J. Settings panel (feat merge) ---
+await page.setViewportSize({ width: 1180, height: 822 });
+await nav("设置");
+await page.waitForSelector(".settings");
+const groups = (await page.locator(".settings-group h2").allInnerTexts()).join("|");
+check("J1 settings panel renders all groups", ["通用", "传输", "外观", "关于与更新"].every((g) => groups.includes(g)), groups);
+await shot("14-settings");
+
 // --- I. Loading state (slow refresh survives reload via init script) ---
 await page.addInitScript(() => { window.__MOCK_SLOW__ = 1500; });
 await page.goto(BASE, { waitUntil: "domcontentloaded" });

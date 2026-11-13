@@ -14,6 +14,12 @@ mod uc;
 use crate::{model::*, quark::Quark};
 use reqwest::cookie::CookieStore;
 use serde_json::Value;
+use std::sync::LazyLock;
+
+static LANZOU_PASSCODE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"(?:提取码|提取碼|密码|密碼|访问码)\s*[:：]?\s*([^\s，。；）)\]]{1,64})")
+        .unwrap()
+});
 
 #[derive(Clone)]
 pub struct Session {
@@ -298,13 +304,10 @@ pub fn parse_share(input: &str, code: &str) -> Result<ShareLink, String> {
                 .unwrap_or_default();
         }
         if provider == Provider::Lanzou && passcode.is_empty() {
-            passcode = regex::Regex::new(
-                r"(?:提取码|提取碼|密码|密碼|访问码)\s*[:：]?\s*([^\s，。；）)\]]{1,64})",
-            )
-            .unwrap()
-            .captures(input)
-            .map(|c| c[1].into())
-            .unwrap_or_default();
+            passcode = LANZOU_PASSCODE
+                .captures(input)
+                .map(|c| c[1].into())
+                .unwrap_or_default();
         }
         if !passcode.is_empty()
             && provider != Provider::Lanzou

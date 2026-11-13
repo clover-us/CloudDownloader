@@ -9,9 +9,12 @@ import AccountDialog from "./AccountDialog.vue";
 import { type Provider, providers, providerName } from "./providers";
 import UploadPanel from "./UploadPanel.vue";
 import SharePanel from "./SharePanel.vue";
+import SettingsPanel from "./SettingsPanel.vue";
 import DownloadBox from "./DownloadBox.vue";
 import TitleBar from "./TitleBar.vue";
 import { version } from "../package.json";
+import { type Settings as AppSettings, defaultSettings } from "./settings";
+import { checkForUpdates, updateStatus } from "./updater";
 import type { UploadTask, CreatedShare } from "./cloud";
 import {
   ArrowDownToLine,
@@ -41,6 +44,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Settings,
   ShieldCheck,
   Trash2,
   UserRound,
@@ -79,6 +83,7 @@ type Snapshot = {
   engineError: string;
   uploads: UploadTask[];
   shares: CreatedShare[];
+  settings: AppSettings;
 };
 const state = ref<Snapshot>({
   accounts: providers.map((p) => ({
@@ -93,6 +98,7 @@ const state = ref<Snapshot>({
   engineError: "",
   uploads: [],
   shares: [],
+  settings: { ...defaultSettings },
 });
 const tab = ref("all");
 const driveProvider = ref<Provider>("quark");
@@ -173,6 +179,7 @@ const title = computed(
       drive: "我的网盘",
       uploads: "上传任务",
       shares: "分享记录",
+      settings: "设置",
     })[tab.value],
 );
 const bytes = (n: number) => {
@@ -354,6 +361,10 @@ async function downloadsCreated(tasks: { status: string; error: string }[]) {
   if (count) notice(`已添加 ${count} 个下载任务`);
   await refresh();
 }
+function settingsSaved(settings: AppSettings) {
+  state.value.settings = settings;
+  state.value.downloadDir = settings.downloadDir;
+}
 async function action(task: Task, action: string) {
   pendingAction.value = task.id;
   error.value = "";
@@ -412,6 +423,7 @@ onMounted(async () => {
   });
   await Promise.all(providers.map((p) => checkAccount(p.id, true)));
   accountsReady.value = true;
+  if (state.value.settings.autoCheckUpdates) void checkForUpdates({ silent: true });
   interval = setInterval(() => {
     for (const provider of signingIn.value) void checkAccount(provider, true);
   }, 4000);
@@ -495,6 +507,16 @@ onUnmounted(() => {
         >
           <UserRound :size="19" />账号管理
         </button>
+        <button
+          :class="{ selected: tab === 'settings' }"
+          @click="tab = 'settings'"
+        >
+          <Settings :size="19" />设置<i
+            v-if="updateStatus.phase === 'available'"
+            class="nav-dot"
+            title="有新版本可用"
+          ></i>
+        </button>
       </nav>
       <div class="sidebar-bottom">
         <div class="account-mini">
@@ -543,7 +565,9 @@ onUnmounted(() => {
                     ? "管理通过本程序创建的百度分享链接。"
                     : tab === "account"
                       ? "连接你的网盘，文件触手可及。"
-                      : "所有下载，一个地方。"
+                      : tab === "settings"
+                        ? "偏好设置与版本更新。"
+                        : "所有下载，一个地方。"
             }}
           </p>
         </div>
@@ -749,12 +773,21 @@ onUnmounted(() => {
           <ShieldCheck :size="17" />各网盘的登录状态独立保存在这台电脑上，登录过期时重新连接即可。
         </div>
       </template>
+      <SettingsPanel
+        v-else-if="tab === 'settings'"
+        :settings="state.settings"
+        @saved="settingsSaved"
+        @directory="chooseDirectory"
+        @folder="folder()"
+        @error="error = $event"
+      />
       <template v-else>
         <DownloadBox
           v-show="tab === 'all'"
           ref="downloadBox"
           :accounts="state.accounts"
           :download-dir="state.downloadDir"
+          :default-connections="state.settings.defaultConnections"
           @login="login"
           @created="downloadsCreated"
           @directory="chooseDirectory"
