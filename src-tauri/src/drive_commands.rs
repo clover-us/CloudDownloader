@@ -108,6 +108,27 @@ fn split_name(name: &str) -> (String, String) {
     }
 }
 
+/// 取路径的父目录（"a/b/c" -> "a/b"，"c" 归一化为 "/"）。
+fn parent_dir(path: &str) -> String {
+    match path.rsplit_once('/') {
+        Some((head, _)) if !head.is_empty() => head.to_string(),
+        _ => "/".to_string(),
+    }
+}
+
+/// 判断任务路径与给定目录是否属于同一目录（忽略首尾多余斜杠）。
+fn same_directory(path: &str, directory: &str) -> bool {
+    let normalize = |value: &str| {
+        let trimmed = value.trim_end_matches('/');
+        if trimmed.is_empty() {
+            "/".to_string()
+        } else {
+            trimmed.to_string()
+        }
+    };
+    normalize(&parent_dir(path)) == normalize(directory)
+}
+
 fn validate_entry_name(name: &str) -> Result<(), String> {
     if name.trim().is_empty()
         || name != name.trim()
@@ -449,18 +470,21 @@ pub async fn upload_enqueue(
             .and_then(|n| n.to_str())
             .ok_or("本地文件名无效")?
             .to_string();
+        let local_path = path.to_string_lossy().to_string();
         let remote_path = child_path(&directory, &name)?;
         if existing.iter().any(|t| {
             t.account_id == account_id
-                && t.remote_path == remote_path
+                && t.provider == provider
+                && t.local_path == local_path
                 && !matches!(t.status.as_str(), "complete" | "error")
+                && same_directory(&t.remote_path, &directory)
         }) {
-            return Err(format!("{name} 已在上传队列中"));
+            return Err(format!("{name} 正在上传中，请勿重复提交"));
         }
         records.push(UploadRecord {
             id: uuid::Uuid::new_v4().to_string(),
             name,
-            local_path: path.to_string_lossy().into(),
+            local_path,
             remote_path,
             account_id: account_id.clone(),
             size,
@@ -516,6 +540,17 @@ pub async fn upload_enqueue(
             }
         }
         _ => {}
+    }
+    // 目标目录中「已排队但尚未完成」的任务也要计入已占用名称，
+    // 否则两批并发上传各自看不到对方，会算出相同的序号（(1)/(1)）。
+    for task in &existing {
+        if task.account_id == account_id
+            && task.provider == provider
+            && !matches!(task.status.as_str(), "complete" | "error")
+            && same_directory(&task.remote_path, &directory)
+        {
+            taken.insert(task.name.clone());
+        }
     }
     // 同名自动重命名：a.txt -> a (1).txt -> a (2).txt ...
     for record in records.iter_mut() {
