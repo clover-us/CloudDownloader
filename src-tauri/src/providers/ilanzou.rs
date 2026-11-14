@@ -54,7 +54,10 @@ fn file(raw: &Value, parent: &str) -> Result<Entry, String> {
                     .ok_or("文件大小异常")?
             },
             is_dir: dir,
-            modified: 0,
+            modified: crate::providers::cloud::entry_timestamp(
+                raw,
+                &["updateTime", "createTime", "modifiedTime", "time"],
+            ),
             md5: String::new(),
         },
         metadata: raw.clone(),

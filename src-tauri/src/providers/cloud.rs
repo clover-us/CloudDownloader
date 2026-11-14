@@ -137,7 +137,7 @@ pub fn parent_id(path: &str, provider: Provider) -> Result<String, String> {
 /// RFC 3339 / "YYYY-MM-DD HH:MM:SS" string) into epoch seconds. Returns 0 when
 /// the value is missing or cannot be parsed, so callers can use it as a
 /// best-effort fallback without failing the whole listing.
-fn timestamp_seconds(raw: &Value) -> u64 {
+pub fn timestamp_seconds(raw: &Value) -> u64 {
     if let Some(value) = raw.as_u64() {
         return if value > 1_000_000_000_000 {
             value / 1000
@@ -155,16 +155,28 @@ fn timestamp_seconds(raw: &Value) -> u64 {
     if let Ok(value) = chrono::DateTime::parse_from_rfc3339(text) {
         return value.timestamp().max(0) as u64;
     }
-    for pattern in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"] {
+    for pattern in [
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+    ] {
         if let Ok(value) = chrono::NaiveDateTime::parse_from_str(text, pattern) {
             return value.and_utc().timestamp().max(0) as u64;
+        }
+        if let Ok(value) = chrono::NaiveDate::parse_from_str(text, pattern) {
+            return value
+                .and_hms_opt(0, 0, 0)
+                .map(|dt| dt.and_utc().timestamp().max(0) as u64)
+                .unwrap_or(0);
         }
     }
     0
 }
 
 /// Pick the first key present in `raw` whose value parses to a real timestamp.
-fn entry_timestamp(raw: &Value, keys: &[&str]) -> u64 {
+pub fn entry_timestamp(raw: &Value, keys: &[&str]) -> u64 {
     for key in keys {
         let seconds = timestamp_seconds(&raw[*key]);
         if seconds > 0 {

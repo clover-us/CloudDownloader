@@ -249,7 +249,10 @@ impl Session {
                             name: visible(&name),
                             size: 0,
                             is_dir: true,
-                            modified: 0,
+                            modified: crate::providers::cloud::entry_timestamp(
+                                raw,
+                                &["addtime", "add_time", "time"],
+                            ),
                             md5: String::new(),
                         },
                         metadata: raw.clone(),
@@ -285,7 +288,10 @@ impl Session {
                         name: visible(&name),
                         size: display_size(&text(&raw["size"])),
                         is_dir: false,
-                        modified: 0,
+                        modified: crate::providers::cloud::entry_timestamp(
+                            raw,
+                            &["time", "addtime", "add_time"],
+                        ),
                         md5: String::new(),
                     },
                     metadata: raw.clone(),
