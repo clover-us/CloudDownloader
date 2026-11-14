@@ -63,16 +63,39 @@ const uploadPartConcurrentInput = ref(props.settings.uploadPartConcurrency);
 const minSplitInput = ref(props.settings.minSplitMib);
 const saving = ref(false);
 
+function syncInputs(value: Settings) {
+  draft.value = { ...value };
+  limitInput.value = toMib(value.maxOverallDownloadLimit);
+  concurrentInput.value = value.maxConcurrentDownloads;
+  uploadChunkInput.value = value.uploadChunkMib;
+  uploadConcurrentInput.value = value.uploadConcurrency;
+  uploadPartConcurrentInput.value = value.uploadPartConcurrency;
+  minSplitInput.value = value.minSplitMib;
+}
+
+function sameSettings(a: Settings, b: Settings) {
+  return (
+    a.downloadDir === b.downloadDir &&
+    a.maxOverallDownloadLimit === b.maxOverallDownloadLimit &&
+    a.maxConcurrentDownloads === b.maxConcurrentDownloads &&
+    a.defaultConnections === b.defaultConnections &&
+    a.closeAction === b.closeAction &&
+    a.autoCheckUpdates === b.autoCheckUpdates &&
+    a.uploadChunkMib === b.uploadChunkMib &&
+    a.uploadConcurrency === b.uploadConcurrency &&
+    a.uploadPartConcurrency === b.uploadPartConcurrency &&
+    a.minSplitMib === b.minSplitMib
+  );
+}
+
+// 后台快照（tasks-changed 等）会反复替换 props.settings。只有值真的变了才回填
+// 输入框，这样下载/上传进行时的刷新不会把正在编辑的数值重置；而切换下载目录等
+// 真实变更仍能同步过来。
 watch(
   () => props.settings,
   (value) => {
-    draft.value = { ...value };
-    limitInput.value = toMib(value.maxOverallDownloadLimit);
-    concurrentInput.value = value.maxConcurrentDownloads;
-    uploadChunkInput.value = value.uploadChunkMib;
-    uploadConcurrentInput.value = value.uploadConcurrency;
-    uploadPartConcurrentInput.value = value.uploadPartConcurrency;
-    minSplitInput.value = value.minSplitMib;
+    if (saving.value) return;
+    if (!sameSettings(value, draft.value)) syncInputs(value);
   },
 );
 
@@ -82,14 +105,10 @@ async function apply(patch: Partial<Settings>) {
   saving.value = true;
   try {
     const saved = await invoke<Settings>("settings_set", { settings: next });
-    draft.value = { ...saved };
-    limitInput.value = toMib(saved.maxOverallDownloadLimit);
-    concurrentInput.value = saved.maxConcurrentDownloads;
+    syncInputs(saved);
     emit("saved", saved);
   } catch (error) {
-    draft.value = { ...props.settings };
-    limitInput.value = toMib(props.settings.maxOverallDownloadLimit);
-    concurrentInput.value = props.settings.maxConcurrentDownloads;
+    syncInputs(props.settings);
     emit("error", String(error));
   } finally {
     saving.value = false;
