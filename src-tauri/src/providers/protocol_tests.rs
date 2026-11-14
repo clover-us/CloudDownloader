@@ -996,3 +996,146 @@ async fn c139_system_folder_browsing_and_download_preserve_original_api_ids() {
         "/fixture-file"
     );
 }
+
+fn fixture_file(id: &str, path: &str, name: &str, is_dir: bool) -> DriveFile {
+    DriveFile {
+        id: id.into(),
+        path: path.into(),
+        name: name.into(),
+        size: if is_dir { 0 } else { 8 },
+        is_dir,
+        modified: 0,
+        created: 0,
+        md5: if is_dir {
+            String::new()
+        } else {
+            "checksum".into()
+        },
+    }
+}
+
+#[tokio::test]
+async fn quark_mkdir_creates_folder_under_parent() {
+    let (session, server) = fixture(
+        Provider::Quark,
+        vec![json!({"code":0,"data":{"fid":"newdir"}})],
+    )
+    .await;
+    let file = session.cloud_mkdir("/", "资料").await.unwrap();
+    assert_eq!(file.id, "newdir");
+    assert_eq!(file.name, "资料");
+    assert_eq!(file.path, "/newdir");
+    assert!(file.is_dir);
+    let requests = server.await.unwrap();
+    assert_eq!(requests.len(), 1);
+    let body: Value = serde_json::from_str(&requests[0].body).unwrap();
+    assert_eq!(body["pdir_fid"], "0");
+    assert_eq!(body["file_name"], "资料");
+    assert_eq!(body["dir_init_lock"], false);
+}
+
+#[tokio::test]
+async fn quark_rename_preserves_id_and_path() {
+    let (session, server) = fixture(Provider::Quark, vec![json!({"code":0,"data":{}})]).await;
+    let file = fixture_file("q123", "/q123", "旧名.txt", false);
+    let renamed = session.cloud_rename(&file, "新名.txt").await.unwrap();
+    assert_eq!(renamed.id, "q123");
+    assert_eq!(renamed.path, "/q123");
+    assert_eq!(renamed.name, "新名.txt");
+    assert_eq!(renamed.md5, "checksum");
+    let requests = server.await.unwrap();
+    assert!(requests[0].target.contains("/file/rename"));
+    let body: Value = serde_json::from_str(&requests[0].body).unwrap();
+    assert_eq!(body["fid"], "q123");
+    assert_eq!(body["file_name"], "新名.txt");
+}
+
+#[tokio::test]
+async fn quark_delete_batches_ids() {
+    let (session, server) = fixture(Provider::Quark, vec![json!({"code":0,"data":{}})]).await;
+    let files = vec![
+        fixture_file("q1", "/q1", "a.txt", false),
+        fixture_file("q2", "/q2", "b", true),
+    ];
+    session.cloud_delete(&files).await.unwrap();
+    let requests = server.await.unwrap();
+    assert!(requests[0].target.contains("/file/delete"));
+    let body: Value = serde_json::from_str(&requests[0].body).unwrap();
+    assert_eq!(body["action_type"], 2);
+    assert_eq!(body["filelist"], json!(["q1", "q2"]));
+}
+
+#[tokio::test]
+async fn xunlei_rename_sends_patch_with_name() {
+    let (session, server) = fixture(
+        Provider::Xunlei,
+        vec![
+            json!({"captcha_token":"cap"}),
+            json!({"error":"","error_code":0,"file":{}}),
+        ],
+    )
+    .await;
+    let file = fixture_file("xl1", "/xl1", "旧.txt", false);
+    let renamed = session.xunlei_rename(&file, "新.txt").await.unwrap();
+    assert_eq!(renamed.id, "xl1");
+    assert_eq!(renamed.name, "新.txt");
+    let requests = server.await.unwrap();
+    assert_eq!(requests[0].target, "/v1/shield/captcha/init");
+    assert!(requests[1].target.contains("xl1"));
+    let body: Value = serde_json::from_str(&requests[1].body).unwrap();
+    assert_eq!(body["name"], "新.txt");
+}
+
+#[tokio::test]
+async fn xunlei_delete_batches_ids() {
+    let (session, server) = fixture(
+        Provider::Xunlei,
+        vec![
+            json!({"captcha_token":"cap"}),
+            json!({"error":"","error_code":0}),
+        ],
+    )
+    .await;
+    let files = vec![
+        fixture_file("x1", "/x1", "a.txt", false),
+        fixture_file("x2", "/x2", "b.txt", false),
+    ];
+    session.xunlei_delete(&files).await.unwrap();
+    let requests = server.await.unwrap();
+    assert!(requests[1].target.ends_with("/files:batchDelete"));
+    let body: Value = serde_json::from_str(&requests[1].body).unwrap();
+    assert_eq!(body["ids"], json!(["x1", "x2"]));
+}
+
+#[tokio::test]
+async fn baidu_rename_updates_path_and_name() {
+    let (session, server) = fixture(Provider::Baidu, vec![json!({"errno":0})]).await;
+    let identity = super::baidu_drive::Identity {
+        account_id: "aid".into(),
+        token: "tok".into(),
+    };
+    let file = fixture_file("7", "/old.txt", "old.txt", false);
+    let renamed = session
+        .drive_rename(&identity, &file, "new.txt")
+        .await
+        .unwrap();
+    assert_eq!(renamed.path, "/new.txt");
+    assert_eq!(renamed.name, "new.txt");
+    let requests = server.await.unwrap();
+    assert!(requests[0].target.starts_with("/api/filemanager"));
+    assert!(requests[0].target.contains("opera=rename"));
+}
+
+#[tokio::test]
+async fn baidu_delete_batches_paths() {
+    let (session, server) = fixture(Provider::Baidu, vec![json!({"errno":0})]).await;
+    let identity = super::baidu_drive::Identity {
+        account_id: "aid".into(),
+        token: "tok".into(),
+    };
+    let files = vec![fixture_file("7", "/a.txt", "a.txt", false)];
+    session.drive_delete(&identity, &files).await.unwrap();
+    let requests = server.await.unwrap();
+    assert!(requests[0].target.starts_with("/api/filemanager"));
+    assert!(requests[0].target.contains("opera=delete"));
+}

@@ -126,7 +126,7 @@ impl Session {
     fn drive_post(&self, path: &str, token: &str) -> reqwest::RequestBuilder {
         self.transport
             .client
-            .post(format!("https://pan.baidu.com{path}"))
+            .post(self.endpoint(&format!("https://pan.baidu.com{path}")))
             .header("Referer", "https://pan.baidu.com/disk/main")
             .header("Origin", "https://pan.baidu.com")
             .query(&[
@@ -340,6 +340,67 @@ impl Session {
             self.json(
                 self.drive_post("/share/cancel", &identity.token)
                     .form(&[("shareid_list", json!([id]).to_string())]),
+            )
+            .await?,
+        )?;
+        Ok(())
+    }
+
+    pub async fn drive_rename(
+        &self,
+        identity: &Identity,
+        file: &DriveFile,
+        new_name: &str,
+    ) -> Result<DriveFile, String> {
+        remote_path(&file.path)?;
+        let parent = file
+            .path
+            .rsplit_once('/')
+            .map(|(p, _)| if p.is_empty() { "/" } else { p })
+            .ok_or("网盘路径无效")?;
+        let new_path = format!("{}/{}", parent.trim_end_matches('/'), new_name);
+        remote_path(&new_path)?;
+        check(
+            self.json(
+                self.drive_post("/api/filemanager", &identity.token)
+                    .query(&[("opera", "rename"), ("async", "1")])
+                    .form(&[(
+                        "filelist",
+                        json!([{ "id": file.id, "path": file.path, "newname": new_name }])
+                            .to_string(),
+                    )]),
+            )
+            .await?,
+        )?;
+        Ok(DriveFile {
+            id: file.id.clone(),
+            path: new_path,
+            name: new_name.into(),
+            size: file.size,
+            is_dir: file.is_dir,
+            modified: now(),
+            created: file.created,
+            md5: file.md5.clone(),
+        })
+    }
+
+    pub async fn drive_delete(
+        &self,
+        identity: &Identity,
+        files: &[DriveFile],
+    ) -> Result<(), String> {
+        if files.is_empty() {
+            return Err("请选择要删除的文件".into());
+        }
+        let list = files
+            .iter()
+            .map(|f| json!({ "id": f.id, "path": f.path }))
+            .collect::<Vec<_>>();
+        check(
+            self.json(
+                self.drive_post("/api/filemanager", &identity.token)
+                    .query(&[("opera", "delete"), ("async", "1")])
+                    .form(&[("filelist", json!(list).to_string())]),
             )
             .await?,
         )?;

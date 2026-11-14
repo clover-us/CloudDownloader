@@ -260,6 +260,36 @@ impl Session {
         check(self.provider, value)
     }
 
+    /// Issue an arbitrary authenticated API request (e.g. PATCH or a batch POST)
+    /// that needs a captcha token, reusing the shared header/authorization setup.
+    async fn api_send(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&Value>,
+        captcha: &str,
+    ) -> Result<Value, String> {
+        let mut request = self
+            .transport
+            .client
+            .request(method, self.endpoint(&format!("{API}{path}")))
+            .header("X-Client-Id", CLIENT_ID)
+            .header("X-Client-Version", CLIENT_VERSION)
+            .header("X-Device-Id", &self.device_id)
+            .header("X-Captcha-Token", captcha)
+            .header("Accept", "application/json, text/plain, */*")
+            .header("Referer", "https://pan.xunlei.com/")
+            .header("User-Agent", USER_AGENT);
+        if let Some(body) = body {
+            request = request.json(body);
+        }
+        if !self.authorization.is_empty() {
+            request = request.header("Authorization", &self.authorization);
+        }
+        let value = self.json(request).await?;
+        check(self.provider, value)
+    }
+
     fn jwt_identity(&self) -> Option<(String, String)> {
         let raw = self.authorization.trim();
         let token = raw.strip_prefix("Bearer ").unwrap_or(raw).trim();
@@ -562,6 +592,47 @@ impl Session {
             created: now(),
             md5: String::new(),
         })
+    }
+
+    pub async fn xunlei_rename(
+        &self,
+        file: &DriveFile,
+        new_name: &str,
+    ) -> Result<DriveFile, String> {
+        let captcha = self.captcha("PATCH:/drive/v1/files").await?;
+        self.api_send(
+            reqwest::Method::PATCH,
+            &format!("/files/{}", file.id),
+            Some(&json!({ "name": new_name })),
+            &captcha,
+        )
+        .await?;
+        Ok(DriveFile {
+            id: file.id.clone(),
+            path: file.path.clone(),
+            name: new_name.into(),
+            size: file.size,
+            is_dir: file.is_dir,
+            modified: now(),
+            created: file.created,
+            md5: file.md5.clone(),
+        })
+    }
+
+    pub async fn xunlei_delete(&self, files: &[DriveFile]) -> Result<(), String> {
+        if files.is_empty() {
+            return Err("请选择要删除的文件".into());
+        }
+        let ids = files.iter().map(|f| f.id.clone()).collect::<Vec<_>>();
+        let captcha = self.captcha("POST:/drive/v1/files:batchDelete").await?;
+        self.api_send(
+            reqwest::Method::POST,
+            "/files:batchDelete",
+            Some(&json!({ "ids": ids })),
+            &captcha,
+        )
+        .await?;
+        Ok(())
     }
 
     async fn put_object(&self, params: &Value, path: &Path, size: u64) -> Result<(), String> {

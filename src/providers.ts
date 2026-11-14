@@ -98,13 +98,13 @@ export type DriveAction =
  * Per-provider capabilities. This mirrors what the Rust backend exposes today,
  * so unsupported actions can be rendered disabled instead of silently failing.
  * Backend reality: every provider browses + downloads; Baidu can create folders
- * and shares; Baidu and Xunlei can create folders and upload; none can
- * rename/delete.
+ * and shares; Baidu and Xunlei can upload; Quark, Baidu and Xunlei can create
+ * folders, rename and delete.
  */
 export const driveCapabilities: Record<Provider, DriveAction[]> = {
-  quark: ["browse", "download"],
-  baidu: ["browse", "download", "upload", "mkdir", "share"],
-  xunlei: ["browse", "download", "upload", "mkdir"],
+  quark: ["browse", "download", "mkdir", "rename", "delete"],
+  baidu: ["browse", "download", "upload", "mkdir", "share", "rename", "delete"],
+  xunlei: ["browse", "download", "upload", "mkdir", "rename", "delete"],
   pan115: ["browse", "download"],
   pan123: ["browse", "download"],
   c139: ["browse", "download"],
@@ -122,6 +122,8 @@ export function driveSummary(id: Provider): string {
   if (canDrive(id, "upload")) extras.push("上传");
   if (canDrive(id, "mkdir")) extras.push("新建文件夹");
   if (canDrive(id, "share")) extras.push("分享");
+  if (canDrive(id, "rename")) extras.push("重命名");
+  if (canDrive(id, "delete")) extras.push("删除");
   return extras.length
     ? `浏览${providerName(id)}，支持${extras.join("、")}与下载。`
     : `浏览${providerName(id)}，选择文件或文件夹下载到本地。`;

@@ -72,6 +72,13 @@ pub async fn drive_mkdir_at(
             file.path = format!("{}/{}", parent.trim_end_matches('/'), file.id);
             Ok(file)
         }
+        Provider::Quark => {
+            let identity = session.cloud_identity().await?;
+            if identity.0 != account_id {
+                return Err("网盘账号已切换，请重新选择目录".into());
+            }
+            session.cloud_mkdir(&parent, &name).await
+        }
         _ => Err("该网盘暂不支持新建文件夹".into()),
     }
 }
@@ -89,6 +96,91 @@ fn child_path(parent: &str, name: &str) -> Result<String, String> {
     let path = format!("{}/{}", parent.trim_end_matches('/'), name);
     remote_path(&path)?;
     Ok(path)
+}
+
+fn validate_entry_name(name: &str) -> Result<(), String> {
+    if name.trim().is_empty()
+        || name != name.trim()
+        || name.contains(['/', '\\'])
+        || name.chars().any(char::is_control)
+        || matches!(name, "." | "..")
+    {
+        return Err("文件或文件夹名称无效".into());
+    }
+    Ok(())
+}
+
+/// 重命名任意受支持网盘中的文件或文件夹（百度按路径，夸克/迅雷按文件 id）。
+#[tauri::command]
+pub async fn drive_rename_at(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+    provider: Provider,
+    account_id: String,
+    file: DriveFile,
+    new_name: String,
+) -> Result<DriveFile, String> {
+    trusted(&window)?;
+    validate_entry_name(&new_name)?;
+    let session = session::connect(&app, provider).await?;
+    match provider {
+        Provider::Baidu => {
+            let identity = session.baidu_identity(Some(&account_id)).await?;
+            session.drive_rename(&identity, &file, &new_name).await
+        }
+        Provider::Xunlei => {
+            let identity = session.cloud_identity().await?;
+            if identity.0 != account_id {
+                return Err("网盘账号已切换，请重新选择文件".into());
+            }
+            session.xunlei_rename(&file, &new_name).await
+        }
+        Provider::Quark => {
+            let identity = session.cloud_identity().await?;
+            if identity.0 != account_id {
+                return Err("网盘账号已切换，请重新选择文件".into());
+            }
+            session.cloud_rename(&file, &new_name).await
+        }
+        _ => Err("该网盘暂不支持重命名".into()),
+    }
+}
+
+/// 删除任意受支持网盘中的一批文件或文件夹。
+#[tauri::command]
+pub async fn drive_delete_at(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+    provider: Provider,
+    account_id: String,
+    files: Vec<DriveFile>,
+) -> Result<(), String> {
+    trusted(&window)?;
+    if files.is_empty() {
+        return Err("请选择要删除的文件".into());
+    }
+    let session = session::connect(&app, provider).await?;
+    match provider {
+        Provider::Baidu => {
+            let identity = session.baidu_identity(Some(&account_id)).await?;
+            session.drive_delete(&identity, &files).await
+        }
+        Provider::Xunlei => {
+            let identity = session.cloud_identity().await?;
+            if identity.0 != account_id {
+                return Err("网盘账号已切换，请重新选择文件".into());
+            }
+            session.xunlei_delete(&files).await
+        }
+        Provider::Quark => {
+            let identity = session.cloud_identity().await?;
+            if identity.0 != account_id {
+                return Err("网盘账号已切换，请重新选择文件".into());
+            }
+            session.cloud_delete(&files).await
+        }
+        _ => Err("该网盘暂不支持删除文件".into()),
+    }
 }
 
 #[tauri::command]

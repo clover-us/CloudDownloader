@@ -505,4 +505,123 @@ impl Session {
         };
         self.download_descriptor(url)
     }
+
+    /// Create a folder under `parent` (a UI path) and return the new entry.
+    pub async fn cloud_mkdir(&self, parent: &str, name: &str) -> Result<DriveFile, String> {
+        let parent_id = parent_id(parent, self.provider)?;
+        match self.provider {
+            Provider::Quark => {
+                let value = check(
+                    self.provider,
+                    self.json(
+                        self.transport
+                            .client
+                            .post(self.endpoint("https://drive-pc.quark.cn/1/clouddrive/file"))
+                            .query(&[("pr", "ucpro".to_string()), ("fr", "pc".to_string())])
+                            .header("Referer", "https://pan.quark.cn/")
+                            .json(&json!({
+                                "pdir_fid": parent_id,
+                                "file_name": name,
+                                "dir_path": "",
+                                "dir_init_lock": false,
+                            })),
+                    )
+                    .await?,
+                )?;
+                let id = text(&value["data"]["fid"]);
+                if id.is_empty() {
+                    return Err("创建文件夹失败，请刷新网盘确认".into());
+                }
+                Ok(DriveFile {
+                    id: id.clone(),
+                    path: format!(
+                        "{}/{}",
+                        parent.trim_end_matches('/'),
+                        path_component(self.provider, &id)?
+                    ),
+                    name: name.into(),
+                    size: 0,
+                    is_dir: true,
+                    modified: now(),
+                    created: now(),
+                    md5: String::new(),
+                })
+            }
+            _ => Err("该网盘暂不支持新建文件夹".into()),
+        }
+    }
+
+    /// Rename a personal-drive entry in place. The entry id (and therefore the
+    /// id-based UI path) is preserved; only the display name changes.
+    pub async fn cloud_rename(
+        &self,
+        file: &DriveFile,
+        new_name: &str,
+    ) -> Result<DriveFile, String> {
+        file_identifier(self.provider, &file.id)?;
+        match self.provider {
+            Provider::Quark => {
+                check(
+                    self.provider,
+                    self.json(
+                        self.transport
+                            .client
+                            .post(
+                                self.endpoint("https://drive-pc.quark.cn/1/clouddrive/file/rename"),
+                            )
+                            .query(&[("pr", "ucpro".to_string()), ("fr", "pc".to_string())])
+                            .header("Referer", "https://pan.quark.cn/")
+                            .json(&json!({"fid": file.id, "file_name": new_name})),
+                    )
+                    .await?,
+                )?;
+                Ok(DriveFile {
+                    id: file.id.clone(),
+                    path: file.path.clone(),
+                    name: new_name.into(),
+                    size: file.size,
+                    is_dir: file.is_dir,
+                    modified: now(),
+                    created: file.created,
+                    md5: file.md5.clone(),
+                })
+            }
+            _ => Err("该网盘暂不支持重命名".into()),
+        }
+    }
+
+    /// Delete personal-drive entries in one batch.
+    pub async fn cloud_delete(&self, files: &[DriveFile]) -> Result<(), String> {
+        if files.is_empty() {
+            return Err("请选择要删除的文件".into());
+        }
+        for file in files {
+            file_identifier(self.provider, &file.id)?;
+        }
+        match self.provider {
+            Provider::Quark => {
+                let ids = files.iter().map(|f| f.id.clone()).collect::<Vec<_>>();
+                check(
+                    self.provider,
+                    self.json(
+                        self.transport
+                            .client
+                            .post(
+                                self.endpoint("https://drive-pc.quark.cn/1/clouddrive/file/delete"),
+                            )
+                            .query(&[("pr", "ucpro".to_string()), ("fr", "pc".to_string())])
+                            .header("Referer", "https://pan.quark.cn/")
+                            .json(&json!({
+                                "action_type": 2,
+                                "filelist": ids,
+                                "exclude_fids": [],
+                            })),
+                    )
+                    .await?,
+                )?;
+                Ok(())
+            }
+            _ => Err("该网盘暂不支持删除文件".into()),
+        }
+    }
 }

@@ -132,7 +132,9 @@ const uploading = ref(false);
 const choosingUpload = ref(false);
 const error = ref("");
 const page = ref(1);
-const mode = ref<"" | "upload" | "share" | "mkdir">("");
+const mode = ref<
+  "" | "upload" | "share" | "mkdir" | "rename" | "delete"
+>("");
 const uploadPaths = ref<string[]>([]);
 const uploadDirectory = ref("/");
 const uploadPlan = ref<{ path: string; relative: string }[] | null>(null);
@@ -142,6 +144,9 @@ const period = ref(7);
 const password = ref("");
 const created = ref<CreatedShare | null>(null);
 const shareTargets = ref<DriveFile[]>([]);
+const renameTarget = ref<DriveFile | null>(null);
+const renameName = ref("");
+const deleteTargets = ref<DriveFile[]>([]);
 const modalError = ref("");
 const modalBusy = ref(false);
 const panel = ref<HTMLElement | null>(null);
@@ -341,7 +346,11 @@ watch(
   },
 );
 watch(mode, (value) => {
-  if (!value) shareTargets.value = [];
+  if (!value) {
+    shareTargets.value = [];
+    renameTarget.value = null;
+    deleteTargets.value = [];
+  }
 });
 function onDocumentClick(event: MouseEvent) {
   const target = event.target as HTMLElement | null;
@@ -859,6 +868,24 @@ function prepareShare(files?: DriveFile[]) {
   modalError.value = "";
   mode.value = "share";
 }
+function openRename(file: DriveFile) {
+  if (!canRename.value || busy.value) return;
+  renameTarget.value = file;
+  renameName.value = file.name;
+  modalError.value = "";
+  mode.value = "rename";
+}
+function openDelete(files?: DriveFile[]) {
+  if (!canDelete.value || busy.value) return;
+  const list = files && files.length ? files : selectedFiles.value;
+  if (!list.length) {
+    emit("notice", "请选择要删除的文件");
+    return;
+  }
+  deleteTargets.value = list;
+  modalError.value = "";
+  mode.value = "delete";
+}
 async function submit() {
   if (!listing.value) return;
   modalBusy.value = true;
@@ -891,6 +918,42 @@ async function submit() {
       folderName.value = "";
       emit("notice", "文件夹已创建");
       await load();
+    } else if (mode.value === "rename") {
+      if (!renameTarget.value) return;
+      const name = renameName.value.trim();
+      if (!name) {
+        modalError.value = "请输入新的名称";
+        return;
+      }
+      if (name === renameTarget.value.name) {
+        mode.value = "";
+        return;
+      }
+      await invoke<DriveFile>("drive_rename_at", {
+        provider: props.provider,
+        accountId: listing.value.accountId,
+        file: renameTarget.value,
+        newName: name,
+      });
+      mode.value = "";
+      renameTarget.value = null;
+      emit("notice", "已重命名");
+      await load();
+      emit("changed");
+    } else if (mode.value === "delete") {
+      if (!deleteTargets.value.length) return;
+      await invoke("drive_delete_at", {
+        provider: props.provider,
+        accountId: listing.value.accountId,
+        files: deleteTargets.value,
+      });
+      const count = deleteTargets.value.length;
+      mode.value = "";
+      deleteTargets.value = [];
+      selected.value = [];
+      emit("notice", `已删除 ${count} 项`);
+      await load();
+      emit("changed");
     }
   } catch (e) {
     modalError.value = String(e);
@@ -1175,7 +1238,8 @@ onMounted(async () => {
         <button
           class="secondary"
           :disabled="!canDelete || busy"
-          :title="canDelete ? '删除所选' : '暂不支持删除，敬请期待'"
+          :title="canDelete ? '删除所选' : `${providerName(provider)}暂不支持删除`"
+          @click="openDelete()"
         >
           <Trash2 :size="16" />删除
         </button>
@@ -1282,7 +1346,8 @@ onMounted(async () => {
               <button
                 class="batch-btn"
                 :disabled="!canDelete || busy"
-                :title="canDelete ? '删除所选' : '暂不支持删除，敬请期待'"
+                :title="canDelete ? '删除所选' : `${providerName(provider)}暂不支持删除`"
+                @click="openDelete()"
               >
                 <Trash2 :size="15" />删除
               </button>
@@ -1375,15 +1440,17 @@ onMounted(async () => {
             </button>
             <button
               class="row-action"
-              :title="canRename ? '重命名' : '重命名（即将支持）'"
+              :title="canRename ? '重命名' : '重命名（该网盘暂不支持）'"
               :disabled="!canRename || busy"
+              @click.stop="openRename(file)"
             >
               <Pencil :size="15" />
             </button>
             <button
               class="row-action danger"
-              :title="canDelete ? '删除' : '删除（即将支持）'"
+              :title="canDelete ? '删除' : '删除（该网盘暂不支持）'"
               :disabled="!canDelete || busy"
+              @click.stop="openDelete([file])"
             >
               <Trash2 :size="15" />
             </button>
@@ -1442,9 +1509,13 @@ onMounted(async () => {
                 ? `上传到${providerName(provider)}`
                 : mode === "mkdir"
                   ? "新建文件夹"
-                  : created
-                    ? "分享已创建"
-                    : "创建文件分享"
+                  : mode === "rename"
+                    ? "重命名"
+                    : mode === "delete"
+                      ? `删除 ${deleteTargets.length} 项`
+                      : created
+                        ? "分享已创建"
+                        : "创建文件分享"
             }}
           </h2>
           <button
@@ -1490,7 +1561,30 @@ onMounted(async () => {
           /></label>
           <p class="dialog-note">创建位置：{{ path }}</p></template
         >
-        <template v-else-if="!created"
+        <template v-else-if="mode === 'rename'"
+          ><label
+            >新名称<input
+              v-model="renameName"
+              placeholder="文件或文件夹名称"
+              maxlength="120"
+              required
+              autofocus
+          /></label>
+          <p class="dialog-note">
+            当前名称：{{ renameTarget ? renameTarget.name : "" }}
+          </p></template
+        >
+        <template v-else-if="mode === 'delete'"
+          ><ul class="review-files">
+            <li v-for="file in deleteTargets" :key="file.id" :title="file.path">
+              {{ file.name }}
+            </li>
+          </ul>
+          <p class="dialog-note">
+            删除后无法恢复，请确认要删除以上 {{ deleteTargets.length }} 项。
+          </p></template
+        >
+        <template v-else-if="mode === 'share' && !created"
           ><ul class="review-files">
             <li v-for="file in shareFiles" :key="file.id">
               {{ file.name }}
@@ -1515,7 +1609,7 @@ onMounted(async () => {
             持有链接和提取码的人可以访问所选内容。创建后可在「分享记录」中取消分享。
           </p></template
         >
-        <template v-else
+        <template v-else-if="mode === 'share' && created"
           ><div class="share-success">
             <Check :size="22" />链接已生成 ·
             {{ formatSharePeriod(created.period) }}
@@ -1539,7 +1633,15 @@ onMounted(async () => {
             取消</button
           ><button class="primary" :disabled="modalBusy">
             <LoaderCircle v-if="modalBusy" class="spinning" :size="16" />{{
-              modalBusy ? "正在处理…" : mode === "upload" ? "开始上传" : "创建"
+              modalBusy
+                ? "正在处理…"
+                : mode === "upload"
+                  ? "开始上传"
+                  : mode === "rename"
+                    ? "保存"
+                    : mode === "delete"
+                      ? "删除"
+                      : "创建"
             }}
           </button>
         </div>

@@ -833,6 +833,8 @@ pub fn run() {
             drive_commands::drive_enqueue,
             drive_commands::drive_mkdir,
             drive_commands::drive_mkdir_at,
+            drive_commands::drive_rename_at,
+            drive_commands::drive_delete_at,
             drive_commands::drive_share,
             drive_commands::drive_cancel_share,
             drive_commands::upload_enqueue,

@@ -259,6 +259,13 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
       period: args.period,
     };
   }
+  if (cmd === "drive_rename_at") {
+    const file = args.file as Record<string, unknown>;
+    return { ...file, name: args.newName };
+  }
+  if (cmd === "drive_delete_at") {
+    return null;
+  }
   // feat merge: settings + in-app updater.
   if (cmd === "settings_get") return { ...settings };
   if (cmd === "settings_set") {
