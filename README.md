@@ -27,12 +27,12 @@
 
 ## 下载
 
-最新版本 **0.6.6**：补齐「我的网盘」预留能力——百度、迅雷、夸克支持重命名与删除，夸克新增上传、新建文件夹与创建分享，迅雷新增创建分享；上传内核重做为实时进度 + 同名自动序号 + 迅雷/夸克大文件分片断点续传，并支持配置分片大小与上传并发。
+最新版本 **0.6.7**：网盘文件夹下载与文件夹上传在任务列表中合并为一行，支持展开查看子任务与表头批量暂停、继续、移除；「我的网盘」搜索框统一到所有网盘并改为服务端递归搜索；修复文件夹解析长时间等待、文件夹暂停遗漏与继续后进度清零等问题。
 
 | Windows 安装版 · 推荐                 | 便携版                                 |
 | :------------------------------------ | :------------------------------------- |
 | 自动创建快捷方式，适合日常使用。      | 解压即可运行，保留完整目录结构。       |
-| **[↓ 下载 v0.6.6 安装包][installer]** | **[↓ 下载 v0.6.6 便携 ZIP][portable]** |
+| **[↓ 下载 v0.6.7 安装包][installer]** | **[↓ 下载 v0.6.7 便携 ZIP][portable]** |
 
 [全部版本与更新说明][releases] · [SHA-256 校验文件][checksums]
 
@@ -60,7 +60,8 @@
 | 功能                    | 可以做什么                                                       |
 | :---------------------- | :--------------------------------------------------------------- |
 | **一个下载框**          | 粘贴直链、网盘分享或磁力链接，自动识别类型；也可导入本地种子。   |
-| **九个网盘**            | 浏览个人文件、解析分享、进入子文件夹、选择文件或文件夹下载。     |
+| **九个网盘**            | 浏览个人文件、解析分享、进入子文件夹、选择文件或文件夹下载；搜索当前目录及子目录。 |
+| **文件夹任务与批量操作** | 文件夹下载与文件夹上传合并为一行，可展开查看子任务；表头支持全选、批量暂停、继续、移除与清除已完成。 |
 | **多连接与续传**        | HTTP / HTTPS 最多 16 路连接，支持分段检测、暂停、继续与重试。    |
 | **BT 磁力与种子**       | 支持 v1 / 混合种子、选文件下载、节点数设置、上传限速和可选做种。 |
 | **上传与分享**          | 百度 / 夸克 / 迅雷分片上传与断点续传、新建文件夹、创建分享与重命名删除；文件夹上传保留原目录结构；支持拖放。 |
@@ -138,7 +139,7 @@ npm run tauri dev -- --no-watch
 
 ## 文档与致谢
 
-[使用指南](docs/usage.md) · [开发文档](docs/development.md) · [验证记录](VERIFICATION.md) · [更新说明](docs/release-0.6.6.md) · [第三方许可](third-party/notices/)
+[使用指南](docs/usage.md) · [开发文档](docs/development.md) · [验证记录](VERIFICATION.md) · [更新说明](docs/release-0.6.7.md) · [第三方许可](third-party/notices/)
 
 界面布局与蓝白配色参考 [Motrix](https://github.com/agalwood/Motrix)，保留本项目的统一下载入口与多网盘工作区。
 
@@ -146,7 +147,7 @@ npm run tauri dev -- --no-watch
 
 <p align="center"><sub>sixunited · 作者 <a href="https://github.com/sclliang">sclliang</a></sub></p>
 
-[installer]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.6/CloudDownloader_0.6.6_x64-setup.exe
-[portable]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.6/CloudDownloader-0.6.6-win-x64.zip
-[checksums]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.6/SHA256SUMS-0.6.6.txt
+[installer]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.7/CloudDownloader_0.6.7_x64-setup.exe
+[portable]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.7/CloudDownloader-0.6.7-win-x64.zip
+[checksums]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.7/SHA256SUMS-0.6.7.txt
 [releases]: https://github.com/clover-us/CloudDownloader/releases
