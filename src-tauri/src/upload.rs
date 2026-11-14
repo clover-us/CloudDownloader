@@ -19,7 +19,22 @@ use std::{
 use tauri::{Emitter, Manager};
 use tokio::sync::{watch, Semaphore};
 
+/// 百度上传分片大小：百度 PCS 协议规定 block_list 分片固定 4 MiB，不可改动。
 pub const BLOCK_SIZE: u64 = 4 * 1024 * 1024;
+
+/// 读取「上传分片大小」设置（MiB）并换算为字节；越界时回落默认值。
+/// 百度 / 迅雷 / 夸克三种上传都用它作为分片粒度。
+fn upload_part_size(app: &tauri::AppHandle) -> u64 {
+    let state = app.state::<AppState>();
+    let store = state.store.lock().unwrap();
+    let mib = crate::settings::Settings::load(&store)
+        .upload_chunk_mib
+        .clamp(
+            crate::settings::MIN_UPLOAD_CHUNK_MIB,
+            crate::settings::MAX_UPLOAD_CHUNK_MIB,
+        );
+    mib as u64 * 1024 * 1024
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -139,9 +154,13 @@ fn check_local(t: &UploadRecord) -> Result<(), String> {
     }
     Ok(())
 }
-pub fn hash_file(path: &Path, cancelled: &AtomicBool) -> Result<Vec<String>, String> {
+pub fn hash_file(
+    path: &Path,
+    part_size: u64,
+    cancelled: &AtomicBool,
+) -> Result<Vec<String>, String> {
     let mut file = std::fs::File::open(path).map_err(|_| "无法打开上传文件")?;
-    let mut buffer = vec![0u8; BLOCK_SIZE as usize];
+    let mut buffer = vec![0u8; part_size.max(1) as usize];
     let mut hashes = Vec::new();
     loop {
         if cancelled.load(Ordering::Relaxed) {
@@ -167,12 +186,12 @@ pub fn hash_file(path: &Path, cancelled: &AtomicBool) -> Result<Vec<String>, Str
     }
     Ok(hashes)
 }
-fn confirmed_size(t: &UploadRecord) -> u64 {
+fn confirmed_size(t: &UploadRecord, part_size: u64) -> u64 {
     t.done
         .iter()
         .enumerate()
         .filter(|(_, done)| **done)
-        .map(|(i, _)| t.size.saturating_sub(i as u64 * BLOCK_SIZE).min(BLOCK_SIZE))
+        .map(|(i, _)| t.size.saturating_sub(i as u64 * part_size).min(part_size))
         .sum()
 }
 
@@ -437,16 +456,27 @@ async fn run_upload(
     if session.drive_find(&t.remote_path).await?.is_some() {
         return Err("目标位置已有同名文件，请修改本地文件名或选择其他目录上传".into());
     }
+    // 百度 PCS 的分片固定为 4 MiB（block_list 约定），与可配置的 OSS 分片相互独立；
+    // 但仍沿用与迅雷/夸克一致的「分片 + 实时进度 + 断点续传」内核语义。
+    let part_size = BLOCK_SIZE;
     t.status = "hashing".into();
     save(app, &t)?;
     let path = t.local_path.clone();
-    let hashes = tokio::task::spawn_blocking(move || hash_file(Path::new(&path), &stop))
+    let hashes = tokio::task::spawn_blocking(move || hash_file(Path::new(&path), part_size, &stop))
         .await
         .map_err(|_| "文件校验任务失败")??;
     check_local(&t)?;
-    if !t.hashes.is_empty() && t.hashes != hashes {
-        return Err("本地文件内容已改变，请重新创建上传任务".into());
+    if t.part_size == 0 || t.part_size == part_size {
+        if !t.hashes.is_empty() && t.hashes != hashes {
+            return Err("本地文件内容已改变，请重新创建上传任务".into());
+        }
+    } else {
+        // 历史任务分片大小不一致：旧的分片计划与服务端会话不再适用，从头开始。
+        t.upload_id.clear();
+        t.done.clear();
+        t.confirmed_requests = 0;
     }
+    t.part_size = part_size;
     t.hashes = hashes;
     let pre = session
         .upload_precreate(&identity, &t.remote_path, t.size, &t.hashes, &t.upload_id)
@@ -461,7 +491,7 @@ async fn run_upload(
     for index in &pre.missing {
         t.done[*index] = false;
     }
-    t.completed = confirmed_size(&t);
+    t.completed = confirmed_size(&t, part_size);
     t.status = "active".into();
     save(app, &t)?;
     let baseline = t.completed;
@@ -475,7 +505,7 @@ async fn run_upload(
             let parts = &parts;
             async move {
                 let _permit = parts.acquire().await.map_err(|_| "上传已停止")?;
-                upload_one(session, token, pending, index)
+                upload_one(session, token, pending, index, part_size)
                     .await
                     .map(|_| index)
             }
@@ -486,7 +516,7 @@ async fn run_upload(
         let index = result?;
         t.done[index] = true;
         t.confirmed_requests += 1;
-        t.completed = confirmed_size(&t);
+        t.completed = confirmed_size(&t, part_size);
         t.speed =
             ((t.completed - baseline) as f64 / started.elapsed().as_secs_f64().max(0.001)) as u64;
         save(app, &t)?;
@@ -517,9 +547,6 @@ async fn run_upload(
     save(app, &t)?;
     Ok(())
 }
-
-/// 大文件分片大小（迅雷/夸克续传）。
-const MULTIPART_SIZE: u64 = 8 * 1024 * 1024;
 
 fn sum_done(total: u64, part_size: u64, done: &[bool]) -> u64 {
     (0..done.len())
@@ -556,9 +583,15 @@ async fn run_upload_xunlei(
     let parent_id = t.parent_id.clone();
     let name = t.name.clone();
     let remote_path = t.remote_path.clone();
+    // 续传中的任务沿用创建时的分片大小，保证服务端会话几何一致；新任务读取设置。
+    let part_size = if t.part_size > 0 {
+        t.part_size
+    } else {
+        upload_part_size(app)
+    };
 
     // 小文件：整对象单 PUT。
-    if total <= MULTIPART_SIZE {
+    if total <= part_size {
         t.status = "active".into();
         t.completed = 0;
         save(app, t)?;
@@ -603,7 +636,6 @@ async fn run_upload_xunlei(
     }
 
     // 大文件：分片 + 断点续传。
-    let part_size = MULTIPART_SIZE;
     if t.session.get("params").is_none() || t.session.get("file_id").is_none() {
         let (file_id, params) = session
             .xunlei_begin_upload(&parent_id, &name, total, &gcid)
@@ -840,8 +872,13 @@ async fn run_upload_quark(
     let parent_id = t.parent_id.clone();
     let name = t.name.clone();
     let remote_path = t.remote_path.clone();
+    let part_size = if t.part_size > 0 {
+        t.part_size
+    } else {
+        upload_part_size(app)
+    };
 
-    if total <= MULTIPART_SIZE {
+    if total <= part_size {
         return run_upload_quark_single(
             app,
             t,
@@ -856,7 +893,6 @@ async fn run_upload_quark(
     }
 
     // 大文件：分片 + 断点续传。
-    let part_size = MULTIPART_SIZE;
     // 每次运行都重新计算整文件 md5/sha1 与各分片 SHA1 中间态（一次顺序读文件）。
     let (md5, sha1, states) = {
         let path = local.clone();
@@ -1037,8 +1073,9 @@ async fn upload_one(
     token: &str,
     task: &UploadRecord,
     index: usize,
+    part_size: u64,
 ) -> Result<(), String> {
-    upload_one_with(task, index, Duration::from_secs(1), |bytes| {
+    upload_one_with(task, index, part_size, Duration::from_secs(1), |bytes| {
         session.upload_part(token, &task.remote_path, &task.upload_id, index, bytes)
     })
     .await
@@ -1047,6 +1084,7 @@ async fn upload_one(
 async fn upload_one_with<F, Fut>(
     task: &UploadRecord,
     index: usize,
+    part_size: u64,
     retry_delay: Duration,
     send: F,
 ) -> Result<(), String>
@@ -1063,11 +1101,11 @@ where
         let path = task.local_path.clone();
         let size = task
             .size
-            .saturating_sub(index as u64 * BLOCK_SIZE)
-            .min(BLOCK_SIZE) as usize;
+            .saturating_sub(index as u64 * part_size)
+            .min(part_size) as usize;
         let bytes = tokio::task::spawn_blocking(move || {
             let mut f = std::fs::File::open(path).map_err(|_| "读取分片失败")?;
-            f.seek(SeekFrom::Start(index as u64 * BLOCK_SIZE))
+            f.seek(SeekFrom::Start(index as u64 * part_size))
                 .map_err(|_| "读取分片位置失败")?;
             let mut data = vec![0; size];
             f.read_exact(&mut data).map_err(|_| "本地文件内容已改变")?;
@@ -1099,7 +1137,7 @@ mod tests {
         ));
         std::fs::write(&path, bytes).unwrap();
         let (size, modified_ns) = fingerprint(&path).unwrap();
-        let hashes = hash_file(&path, &AtomicBool::new(false)).unwrap();
+        let hashes = hash_file(&path, BLOCK_SIZE, &AtomicBool::new(false)).unwrap();
         let record = UploadRecord {
             id: uuid::Uuid::new_v4().to_string(),
             name: "test.bin".into(),
@@ -1140,7 +1178,7 @@ mod tests {
         data.extend_from_slice(b"final slice");
         let (_path, record) = fixture(&data);
         let calls = AtomicUsize::new(0);
-        upload_one_with(&record, 1, Duration::ZERO, |bytes| {
+        upload_one_with(&record, 1, BLOCK_SIZE, Duration::ZERO, |bytes| {
             assert_eq!(bytes, b"final slice");
             let attempt = calls.fetch_add(1, Ordering::SeqCst);
             async move {
@@ -1155,12 +1193,14 @@ mod tests {
         .unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 3);
         let calls = AtomicUsize::new(0);
-        assert!(upload_one_with(&record, 1, Duration::ZERO, |_| {
-            calls.fetch_add(1, Ordering::SeqCst);
-            async { Err("offline".into()) }
-        })
-        .await
-        .is_err());
+        assert!(
+            upload_one_with(&record, 1, BLOCK_SIZE, Duration::ZERO, |_| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                async { Err("offline".into()) }
+            })
+            .await
+            .is_err()
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 4);
     }
 
@@ -1168,7 +1208,7 @@ mod tests {
     async fn refuses_changed_source_before_resending_or_resuming() {
         let (path, record) = fixture(b"original");
         let calls = AtomicUsize::new(0);
-        let result = upload_one_with(&record, 0, Duration::ZERO, |_| {
+        let result = upload_one_with(&record, 0, BLOCK_SIZE, Duration::ZERO, |_| {
             calls.fetch_add(1, Ordering::SeqCst);
             std::fs::write(&path.0, b"modified and larger").unwrap();
             async { Err("transient".into()) }
@@ -1184,7 +1224,7 @@ mod tests {
         data.extend_from_slice(b"tail");
         let (_path, mut record) = fixture(&data);
         record.done[0] = true;
-        record.completed = confirmed_size(&record);
+        record.completed = confirmed_size(&record, BLOCK_SIZE);
         let db_path = std::env::temp_dir().join(format!(
             "clouddownloader-upload-test-{}.sqlite3",
             uuid::Uuid::new_v4()

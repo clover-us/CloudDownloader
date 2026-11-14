@@ -23,6 +23,9 @@ import {
   limitPresets,
   maxConcurrentDownloads,
   maxDownloadLimit,
+  maxUploadChunkMib,
+  minUploadChunkMib,
+  uploadChunkChoices,
 } from "./settings";
 import { theme, setTheme } from "./theme";
 import {
@@ -44,6 +47,7 @@ const emit = defineEmits<{
 const draft = ref<Settings>({ ...props.settings });
 const limitInput = ref(props.settings.maxOverallDownloadLimit);
 const concurrentInput = ref(props.settings.maxConcurrentDownloads);
+const uploadChunkInput = ref(props.settings.uploadChunkMib);
 const saving = ref(false);
 
 watch(
@@ -52,6 +56,7 @@ watch(
     draft.value = { ...value };
     limitInput.value = value.maxOverallDownloadLimit;
     concurrentInput.value = value.maxConcurrentDownloads;
+    uploadChunkInput.value = value.uploadChunkMib;
   },
 );
 
@@ -97,6 +102,15 @@ function applyConcurrent() {
   concurrentInput.value = clamped;
   if (clamped !== draft.value.maxConcurrentDownloads) {
     void apply({ maxConcurrentDownloads: clamped });
+  }
+}
+
+function applyUploadChunk() {
+  const parsed = Math.round(Number(uploadChunkInput.value) || 0);
+  const clamped = Math.min(Math.max(parsed, minUploadChunkMib), maxUploadChunkMib);
+  uploadChunkInput.value = clamped;
+  if (clamped !== draft.value.uploadChunkMib) {
+    void apply({ uploadChunkMib: clamped });
   }
 }
 
@@ -309,6 +323,44 @@ function openRepository() {
             {{ choice }}
           </button>
         </div>
+      </div>
+      <div class="divider"></div>
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>上传分片大小</strong>
+          <small>
+            迅雷 / 夸克上传的分片粒度（{{ minUploadChunkMib }}–{{
+              maxUploadChunkMib
+            }}
+            MiB）；越大多分片开销越少，越小断点续传越细。百度上传按协议固定 4 MiB。
+          </small>
+        </div>
+        <div class="row-actions">
+          <input
+            v-model.number="uploadChunkInput"
+            class="number-input"
+            type="number"
+            :min="minUploadChunkMib"
+            :max="maxUploadChunkMib"
+            step="1"
+            aria-label="上传分片大小（MiB）"
+            @change="applyUploadChunk"
+            @keydown.enter="applyUploadChunk"
+          />
+          <span class="unit">MiB</span>
+        </div>
+      </div>
+      <div class="presets">
+        <button
+          v-for="choice in uploadChunkChoices"
+          :key="choice"
+          class="chip"
+          :class="{ active: draft.uploadChunkMib === choice }"
+          :disabled="saving"
+          @click="apply({ uploadChunkMib: choice })"
+        >
+          {{ choice }} MiB
+        </button>
       </div>
     </section>
 

@@ -7,6 +7,11 @@ pub const DEFAULT_CONCURRENT_DOWNLOADS: u8 = 3;
 pub const DEFAULT_CONNECTIONS: u8 = 16;
 pub const CONNECTION_CHOICES: [u8; 4] = [1, 4, 8, 16];
 
+/// 上传分片大小（MiB）：影响百度/迅雷/夸克的分片粒度与续传。
+pub const MIN_UPLOAD_CHUNK_MIB: u8 = 1;
+pub const MAX_UPLOAD_CHUNK_MIB: u8 = 32;
+pub const DEFAULT_UPLOAD_CHUNK_MIB: u8 = 8;
+
 /// 关闭主窗口时的行为。
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -42,6 +47,7 @@ pub struct Settings {
     pub default_connections: u8,
     pub close_action: CloseAction,
     pub auto_check_updates: bool,
+    pub upload_chunk_mib: u8,
 }
 
 impl Default for Settings {
@@ -53,6 +59,7 @@ impl Default for Settings {
             default_connections: DEFAULT_CONNECTIONS,
             close_action: CloseAction::Tray,
             auto_check_updates: true,
+            upload_chunk_mib: DEFAULT_UPLOAD_CHUNK_MIB,
         }
     }
 }
@@ -90,6 +97,14 @@ impl Settings {
         if let Some(value) = store.setting("auto_check_updates") {
             settings.auto_check_updates = value != "0";
         }
+        if let Some(value) = store
+            .setting("upload_chunk_mib")
+            .and_then(|value| value.parse::<u8>().ok())
+        {
+            if (MIN_UPLOAD_CHUNK_MIB..=MAX_UPLOAD_CHUNK_MIB).contains(&value) {
+                settings.upload_chunk_mib = value;
+            }
+        }
         settings
     }
 
@@ -112,6 +127,14 @@ impl Settings {
         }
         if !CONNECTION_CHOICES.contains(&self.default_connections) {
             return Err("默认连接数只能是 1、4、8 或 16".into());
+        }
+        if self.upload_chunk_mib < MIN_UPLOAD_CHUNK_MIB
+            || self.upload_chunk_mib > MAX_UPLOAD_CHUNK_MIB
+        {
+            return Err(format!(
+                "上传分片大小需要在 {}–{} MiB 之间",
+                MIN_UPLOAD_CHUNK_MIB, MAX_UPLOAD_CHUNK_MIB
+            ));
         }
         Ok(())
     }
@@ -157,6 +180,7 @@ pub fn save(store: &crate::store::Store, settings: &Settings) -> Result<Settings
             "0"
         },
     )?;
+    store.set_setting("upload_chunk_mib", &settings.upload_chunk_mib.to_string())?;
     Ok(settings.clone())
 }
 
