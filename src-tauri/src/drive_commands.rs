@@ -1,7 +1,9 @@
 use crate::{
     model::*,
     providers::{baidu_drive::remote_path, cloud},
-    resolve_tasks_in_background, session, trusted,
+    resolve_tasks_in_background, session,
+    settings::Settings,
+    trusted,
     upload::{self, UploadRecord, UploadView},
     AppState,
 };
@@ -428,9 +430,15 @@ pub async fn upload_enqueue(
     concurrency: usize,
 ) -> Result<Vec<UploadView>, String> {
     trusted(&window)?;
-    if paths.is_empty() || paths.len() > 100 || !matches!(concurrency, 1 | 2 | 4 | 8) {
-        return Err("请选择 1 至 100 个文件，并使用 1、2、4 或 8 路并发".into());
+    if paths.is_empty() || paths.len() > 100 {
+        return Err("请选择 1 至 100 个文件".into());
     }
+    // 单文件分片并发受「单文件分片并发上限」设置约束（超出则收敛到上限）。
+    let part_cap = {
+        let store = state.store.lock().unwrap();
+        Settings::load(&store).upload_part_concurrency.max(1) as usize
+    };
+    let concurrency = concurrency.clamp(1, part_cap);
     remote_path(&directory)?;
     let _guard = state.resolving.lock().await;
     let session = session::connect(&app, provider).await?;

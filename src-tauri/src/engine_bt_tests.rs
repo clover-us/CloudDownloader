@@ -12,14 +12,18 @@ fn port() -> u16 {
     l.local_addr().unwrap().port()
 }
 fn local_engine(port: u16) -> Engine {
-    Engine::with_args(&[
-        "--enable-dht=false",
-        "--enable-dht6=false",
-        "--bt-enable-lpd=false",
-        "--enable-peer-exchange=false",
-        &format!("--listen-port={port}"),
-        "--bt-tracker-interval=1",
-    ])
+    Engine::with_args(
+        &[
+            "--enable-dht=false",
+            "--enable-dht6=false",
+            "--bt-enable-lpd=false",
+            "--enable-peer-exchange=false",
+            &format!("--listen-port={port}"),
+            "--bt-tracker-interval=1",
+        ],
+        16,
+        1,
+    )
     .unwrap()
 }
 async fn ready(rpc: &Rpc) {

@@ -41,9 +41,9 @@ impl Engine {
             .map(|(key, value)| format!("--{key}={value}"))
             .collect();
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
-        Self::with_args(&args)
+        Self::with_args(&args, settings.default_connections, settings.min_split_mib)
     }
-    fn with_args(extra: &[&str]) -> Result<Self, String> {
+    fn with_args(extra: &[&str], connections: u8, min_split_mib: u8) -> Result<Self, String> {
         let executable = find_binary()?;
         let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
         let port = listener.local_addr().map_err(|e| e.to_string())?.port();
@@ -58,9 +58,6 @@ impl Engine {
             "--summary-interval=0",
             "--download-result=hide",
             "--file-allocation=none",
-            "--split=16",
-            "--max-connection-per-server=16",
-            "--min-split-size=1M",
             "--max-tries=3",
             "--retry-wait=2",
             "--continue=true",
@@ -76,6 +73,12 @@ impl Engine {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+        cmd.arg(format!("--split={}", connections.max(1)))
+            .arg(format!(
+                "--max-connection-per-server={}",
+                connections.max(1)
+            ))
+            .arg(format!("--min-split-size={}M", min_split_mib.max(1)));
         cmd.args(extra);
         #[cfg(windows)]
         {
@@ -277,6 +280,36 @@ impl Rpc {
     ) -> Result<String, String> {
         self.add_with_options(url, directory, name, headers, user_agent, json!({}))
             .await
+    }
+
+    /// 云端/网盘下载任务：按用户设置的连接数与最小分段大小创建分段下载。
+    /// 这样「默认连接数」和「最小分段大小」对网盘下载真正生效（此前 add() 传空选项，
+    /// 只能继承守护进程的全局 16 连接）。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn add_cloud(
+        &self,
+        url: &str,
+        directory: &str,
+        name: &str,
+        headers: &[String],
+        user_agent: &str,
+        connections: u8,
+        min_split_mib: u8,
+    ) -> Result<String, String> {
+        let split = connections.max(1).to_string();
+        self.add_with_options(
+            url,
+            directory,
+            name,
+            headers,
+            user_agent,
+            json!({
+                "split": split.clone(),
+                "max-connection-per-server": split,
+                "min-split-size": format!("{}M", min_split_mib.max(1)),
+            }),
+        )
+        .await
     }
 
     pub async fn add_direct(

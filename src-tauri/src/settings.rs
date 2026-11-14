@@ -12,6 +12,21 @@ pub const MIN_UPLOAD_CHUNK_MIB: u8 = 1;
 pub const MAX_UPLOAD_CHUNK_MIB: u8 = 32;
 pub const DEFAULT_UPLOAD_CHUNK_MIB: u8 = 8;
 
+/// 同时上传的任务数（个）：控制有多少个文件并行上传。
+pub const MIN_UPLOAD_CONCURRENCY: u8 = 1;
+pub const MAX_UPLOAD_CONCURRENCY: u8 = 8;
+pub const DEFAULT_UPLOAD_CONCURRENCY: u8 = 2;
+
+/// 单个文件内部的分片并发上限：控制每个文件同时上传多少个分片。
+pub const MIN_UPLOAD_PART_CONCURRENCY: u8 = 1;
+pub const MAX_UPLOAD_PART_CONCURRENCY: u8 = 16;
+pub const DEFAULT_UPLOAD_PART_CONCURRENCY: u8 = 4;
+
+/// aria2 最小分段大小（MiB）：越小分段越细、连接越均匀，越大分段越少。
+pub const MIN_SPLIT_MIB: u8 = 1;
+pub const MAX_SPLIT_MIB: u8 = 64;
+pub const DEFAULT_SPLIT_MIB: u8 = 1;
+
 /// 关闭主窗口时的行为。
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -48,6 +63,9 @@ pub struct Settings {
     pub close_action: CloseAction,
     pub auto_check_updates: bool,
     pub upload_chunk_mib: u8,
+    pub upload_concurrency: u8,
+    pub upload_part_concurrency: u8,
+    pub min_split_mib: u8,
 }
 
 impl Default for Settings {
@@ -60,6 +78,9 @@ impl Default for Settings {
             close_action: CloseAction::Tray,
             auto_check_updates: true,
             upload_chunk_mib: DEFAULT_UPLOAD_CHUNK_MIB,
+            upload_concurrency: DEFAULT_UPLOAD_CONCURRENCY,
+            upload_part_concurrency: DEFAULT_UPLOAD_PART_CONCURRENCY,
+            min_split_mib: DEFAULT_SPLIT_MIB,
         }
     }
 }
@@ -105,6 +126,30 @@ impl Settings {
                 settings.upload_chunk_mib = value;
             }
         }
+        if let Some(value) = store
+            .setting("upload_concurrency")
+            .and_then(|value| value.parse::<u8>().ok())
+        {
+            if (MIN_UPLOAD_CONCURRENCY..=MAX_UPLOAD_CONCURRENCY).contains(&value) {
+                settings.upload_concurrency = value;
+            }
+        }
+        if let Some(value) = store
+            .setting("upload_part_concurrency")
+            .and_then(|value| value.parse::<u8>().ok())
+        {
+            if (MIN_UPLOAD_PART_CONCURRENCY..=MAX_UPLOAD_PART_CONCURRENCY).contains(&value) {
+                settings.upload_part_concurrency = value;
+            }
+        }
+        if let Some(value) = store
+            .setting("min_split_mib")
+            .and_then(|value| value.parse::<u8>().ok())
+        {
+            if (MIN_SPLIT_MIB..=MAX_SPLIT_MIB).contains(&value) {
+                settings.min_split_mib = value;
+            }
+        }
         settings
     }
 
@@ -134,6 +179,28 @@ impl Settings {
             return Err(format!(
                 "上传分片大小需要在 {}–{} MiB 之间",
                 MIN_UPLOAD_CHUNK_MIB, MAX_UPLOAD_CHUNK_MIB
+            ));
+        }
+        if self.upload_concurrency < MIN_UPLOAD_CONCURRENCY
+            || self.upload_concurrency > MAX_UPLOAD_CONCURRENCY
+        {
+            return Err(format!(
+                "同时上传数需要在 {}–{} 之间",
+                MIN_UPLOAD_CONCURRENCY, MAX_UPLOAD_CONCURRENCY
+            ));
+        }
+        if self.upload_part_concurrency < MIN_UPLOAD_PART_CONCURRENCY
+            || self.upload_part_concurrency > MAX_UPLOAD_PART_CONCURRENCY
+        {
+            return Err(format!(
+                "单文件分片并发需要在 {}–{} 之间",
+                MIN_UPLOAD_PART_CONCURRENCY, MAX_UPLOAD_PART_CONCURRENCY
+            ));
+        }
+        if self.min_split_mib < MIN_SPLIT_MIB || self.min_split_mib > MAX_SPLIT_MIB {
+            return Err(format!(
+                "最小分段大小需要在 {}–{} MiB 之间",
+                MIN_SPLIT_MIB, MAX_SPLIT_MIB
             ));
         }
         Ok(())
@@ -181,6 +248,15 @@ pub fn save(store: &crate::store::Store, settings: &Settings) -> Result<Settings
         },
     )?;
     store.set_setting("upload_chunk_mib", &settings.upload_chunk_mib.to_string())?;
+    store.set_setting(
+        "upload_concurrency",
+        &settings.upload_concurrency.to_string(),
+    )?;
+    store.set_setting(
+        "upload_part_concurrency",
+        &settings.upload_part_concurrency.to_string(),
+    )?;
+    store.set_setting("min_split_mib", &settings.min_split_mib.to_string())?;
     Ok(settings.clone())
 }
 

@@ -23,8 +23,14 @@ import {
   limitPresets,
   maxConcurrentDownloads,
   maxDownloadLimit,
+  maxSplitMib,
   maxUploadChunkMib,
+  maxUploadConcurrency,
+  maxUploadPartConcurrency,
+  minSplitMib,
   minUploadChunkMib,
+  minUploadConcurrency,
+  minUploadPartConcurrency,
   uploadChunkChoices,
 } from "./settings";
 import { theme, setTheme } from "./theme";
@@ -52,6 +58,9 @@ const draft = ref<Settings>({ ...props.settings });
 const limitInput = ref(toMib(props.settings.maxOverallDownloadLimit));
 const concurrentInput = ref(props.settings.maxConcurrentDownloads);
 const uploadChunkInput = ref(props.settings.uploadChunkMib);
+const uploadConcurrentInput = ref(props.settings.uploadConcurrency);
+const uploadPartConcurrentInput = ref(props.settings.uploadPartConcurrency);
+const minSplitInput = ref(props.settings.minSplitMib);
 const saving = ref(false);
 
 watch(
@@ -61,6 +70,9 @@ watch(
     limitInput.value = toMib(value.maxOverallDownloadLimit);
     concurrentInput.value = value.maxConcurrentDownloads;
     uploadChunkInput.value = value.uploadChunkMib;
+    uploadConcurrentInput.value = value.uploadConcurrency;
+    uploadPartConcurrentInput.value = value.uploadPartConcurrency;
+    minSplitInput.value = value.minSplitMib;
   },
 );
 
@@ -116,6 +128,39 @@ function applyUploadChunk() {
   uploadChunkInput.value = clamped;
   if (clamped !== draft.value.uploadChunkMib) {
     void apply({ uploadChunkMib: clamped });
+  }
+}
+
+function applyUploadConcurrent() {
+  const parsed = Math.round(Number(uploadConcurrentInput.value) || 0);
+  const clamped = Math.min(
+    Math.max(parsed, minUploadConcurrency),
+    maxUploadConcurrency,
+  );
+  uploadConcurrentInput.value = clamped;
+  if (clamped !== draft.value.uploadConcurrency) {
+    void apply({ uploadConcurrency: clamped });
+  }
+}
+
+function applyUploadPartConcurrent() {
+  const parsed = Math.round(Number(uploadPartConcurrentInput.value) || 0);
+  const clamped = Math.min(
+    Math.max(parsed, minUploadPartConcurrency),
+    maxUploadPartConcurrency,
+  );
+  uploadPartConcurrentInput.value = clamped;
+  if (clamped !== draft.value.uploadPartConcurrency) {
+    void apply({ uploadPartConcurrency: clamped });
+  }
+}
+
+function applyMinSplit() {
+  const parsed = Math.round(Number(minSplitInput.value) || 0);
+  const clamped = Math.min(Math.max(parsed, minSplitMib), maxSplitMib);
+  minSplitInput.value = clamped;
+  if (clamped !== draft.value.minSplitMib) {
+    void apply({ minSplitMib: clamped });
   }
 }
 
@@ -332,6 +377,29 @@ function openRepository() {
       <div class="divider"></div>
       <div class="setting-row">
         <div class="setting-copy">
+          <strong>最小分段大小</strong>
+          <small
+            >aria2 下载的最小分段（{{ minSplitMib }}–{{ maxSplitMib }} MiB）；越小分段越细，越大分段越少</small
+          >
+        </div>
+        <div class="row-actions">
+          <input
+            v-model.number="minSplitInput"
+            class="number-input"
+            type="number"
+            :min="minSplitMib"
+            :max="maxSplitMib"
+            step="1"
+            aria-label="最小分段大小（MiB）"
+            @change="applyMinSplit"
+            @keydown.enter="applyMinSplit"
+          />
+          <span class="unit">MiB</span>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="setting-row">
+        <div class="setting-copy">
           <strong>上传分片大小</strong>
           <small>
             迅雷 / 夸克上传的分片粒度（{{ minUploadChunkMib }}–{{
@@ -366,6 +434,56 @@ function openRepository() {
         >
           {{ choice }} MiB
         </button>
+      </div>
+      <div class="divider"></div>
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>同时上传数</strong>
+          <small
+            >同时进行的上传任务数量（{{ minUploadConcurrency }}–{{
+              maxUploadConcurrency
+            }}）</small
+          >
+        </div>
+        <div class="row-actions">
+          <input
+            v-model.number="uploadConcurrentInput"
+            class="number-input"
+            type="number"
+            :min="minUploadConcurrency"
+            :max="maxUploadConcurrency"
+            step="1"
+            aria-label="同时上传的任务数量"
+            @change="applyUploadConcurrent"
+            @keydown.enter="applyUploadConcurrent"
+          />
+          <span class="unit">个</span>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>单文件分片并发</strong>
+          <small
+            >每个文件同时上传的分片数上限（{{ minUploadPartConcurrency }}–{{
+              maxUploadPartConcurrency
+            }}）</small
+          >
+        </div>
+        <div class="row-actions">
+          <input
+            v-model.number="uploadPartConcurrentInput"
+            class="number-input"
+            type="number"
+            :min="minUploadPartConcurrency"
+            :max="maxUploadPartConcurrency"
+            step="1"
+            aria-label="单文件分片并发"
+            @change="applyUploadPartConcurrent"
+            @keydown.enter="applyUploadPartConcurrent"
+          />
+          <span class="unit">个</span>
+        </div>
       </div>
     </section>
 

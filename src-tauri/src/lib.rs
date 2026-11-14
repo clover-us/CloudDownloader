@@ -224,6 +224,11 @@ async fn settings_set(
     if let Ok(rpc) = rpc(&state) {
         let _ = rpc.change_global_options(&saved.aria2_options()).await;
     }
+    // 上传并发变更后立即生效（进行中的任务不受影响）。
+    state.uploads.set_limits(
+        saved.upload_concurrency as usize,
+        (saved.upload_concurrency as usize * saved.upload_part_concurrency as usize).max(1),
+    );
     Ok(saved)
 }
 
@@ -238,6 +243,11 @@ async fn start_task(
     task.speed = 0;
     task.upload_speed = 0;
     state.store.lock().unwrap().save(&task)?;
+    let (cloud_connections, cloud_min_split) = {
+        let store = state.store.lock().unwrap();
+        let settings = Settings::load(&store);
+        (settings.default_connections, settings.min_split_mib)
+    };
     let result = async {
         std::fs::create_dir_all(&task.directory)
             .map_err(|_| "无法创建下载目录，请选择可写的文件夹")?;
@@ -300,12 +310,14 @@ async fn start_task(
             task.size = size;
         }
         let gid = rpc(state)?
-            .add(
+            .add_cloud(
                 &download.url,
                 &task.directory,
                 &task.name,
                 &download.headers,
                 &download.user_agent,
+                cloud_connections,
+                cloud_min_split,
             )
             .await?;
         Ok::<String, String>(gid)
@@ -766,7 +778,12 @@ pub fn run() {
                         .collect(),
                 ),
                 resolving: tokio::sync::Mutex::new(()),
-                uploads: upload::UploadManager::default(),
+                uploads: upload::UploadManager::new(
+                    preferences.upload_concurrency as usize,
+                    (preferences.upload_concurrency as usize
+                        * preferences.upload_part_concurrency as usize)
+                        .max(1),
+                ),
                 session_cache_error: Mutex::new(String::new()),
                 exiting: AtomicBool::new(false),
                 bt_jobs: Default::default(),

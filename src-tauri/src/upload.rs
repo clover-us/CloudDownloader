@@ -118,16 +118,39 @@ impl From<UploadRecord> for UploadView {
 
 pub struct UploadManager {
     running: Mutex<HashMap<String, watch::Sender<bool>>>,
-    slots: Arc<Semaphore>,
-    parts: Arc<Semaphore>,
+    /// (同时上传任务数, 全局分片并发上限)；可在设置变更后热更新。
+    limits: Mutex<(Arc<Semaphore>, Arc<Semaphore>)>,
+}
+impl UploadManager {
+    pub fn new(slots: usize, parts: usize) -> Self {
+        Self {
+            running: Mutex::new(HashMap::new()),
+            limits: Mutex::new((
+                Arc::new(Semaphore::new(slots.max(1))),
+                Arc::new(Semaphore::new(parts.max(1))),
+            )),
+        }
+    }
+    /// 设置变更后立即更新上传并发（不影响正在进行中的任务）。
+    pub fn set_limits(&self, slots: usize, parts: usize) {
+        let mut limits = self.limits.lock().unwrap();
+        *limits = (
+            Arc::new(Semaphore::new(slots.max(1))),
+            Arc::new(Semaphore::new(parts.max(1))),
+        );
+    }
+    fn take_limits(&self) -> (Arc<Semaphore>, Arc<Semaphore>) {
+        let limits = self.limits.lock().unwrap();
+        (limits.0.clone(), limits.1.clone())
+    }
 }
 impl Default for UploadManager {
     fn default() -> Self {
-        Self {
-            running: Mutex::new(HashMap::new()),
-            slots: Arc::new(Semaphore::new(2)),
-            parts: Arc::new(Semaphore::new(8)),
-        }
+        Self::new(
+            crate::settings::DEFAULT_UPLOAD_CONCURRENCY as usize,
+            crate::settings::DEFAULT_UPLOAD_CONCURRENCY as usize
+                * crate::settings::DEFAULT_UPLOAD_PART_CONCURRENCY as usize,
+        )
     }
 }
 
@@ -388,8 +411,7 @@ impl UploadManager {
             }
             running.insert(task.id.clone(), cancel);
         }
-        let slots = self.slots.clone();
-        let parts = self.parts.clone();
+        let (slots, parts) = self.take_limits();
         tauri::async_runtime::spawn(async move {
             let id = task.id.clone();
             let stop = Arc::new(AtomicBool::new(false));
