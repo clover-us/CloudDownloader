@@ -282,6 +282,26 @@ function applyFilter() {
 function resetFilter() {
   draftTypes.value = [];
 }
+const pathNames = computed(() => {
+  const map = new Map<string, string>();
+  for (const crumb of trail.value) map.set(crumb.path, crumb.name);
+  for (const file of fullFiles.value ?? listing.value?.files ?? [])
+    map.set(file.path, file.name);
+  return map;
+});
+// Render a folder path with human-readable names instead of the internal ids
+// used by cloud providers (Baidu already stores readable paths).
+function pathLabel(target: string): string {
+  if (!target || target === "/") return "/";
+  if (isBaidu.value) return target;
+  const map = pathNames.value;
+  const parts = target.split("/").filter(Boolean);
+  const resolved = parts.map((part, index) => {
+    const sub = "/" + parts.slice(0, index + 1).join("/");
+    return map.get(sub) ?? map.get("/" + part) ?? part;
+  });
+  return "/" + resolved.join("/");
+}
 const scopeLabel = computed(() => {
   if (!globalMode.value) return "";
   if (fullLoading.value) return "全库加载中…";
@@ -1001,7 +1021,7 @@ onMounted(async () => {
     >
       <CloudUpload :size="22" />
       <span
-        >松开即可上传到 <strong>{{ dropDirectory }}</strong></span
+        >松开即可上传到 <strong>{{ pathLabel(dropDirectory) }}</strong></span
       >
     </div>
 
@@ -1533,7 +1553,7 @@ onMounted(async () => {
           {{ modalError }}
         </div>
         <template v-if="mode === 'upload'"
-          ><label>目标目录<input :value="uploadDirectory" readonly /></label>
+          ><label>目标目录<input :value="pathLabel(uploadDirectory)" readonly /></label>
           <ul class="review-files">
             <li v-for="file in uploadPaths" :key="file" :title="file">
               {{ file.split(/[\\/]/).pop() }}
