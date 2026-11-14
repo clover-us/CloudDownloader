@@ -252,6 +252,9 @@ async fn run_upload(
     if t.provider == Provider::Xunlei {
         return run_upload_xunlei(app, &mut t, stop).await;
     }
+    if t.provider == Provider::Quark {
+        return run_upload_quark(app, &mut t, stop).await;
+    }
     let session = session::connect(app, Provider::Baidu).await?;
     let identity = session.baidu_identity(Some(&t.account_id)).await?;
     check_local(&t)?;
@@ -380,6 +383,42 @@ async fn run_upload_xunlei(
     if remote.md5 != gcid {
         return Err("云端文件校验值与本地不一致，请重试".into());
     }
+    t.remote_file = Some(remote);
+    t.status = "complete".into();
+    t.completed = t.size;
+    t.upload_id.clear();
+    save(app, t)?;
+    Ok(())
+}
+
+async fn run_upload_quark(
+    app: &tauri::AppHandle,
+    t: &mut UploadRecord,
+    stop: Arc<AtomicBool>,
+) -> Result<(), String> {
+    let session = session::connect(app, Provider::Quark).await?;
+    if session.cloud_identity().await?.0 != t.account_id {
+        return Err("夸克账号已切换，请使用创建任务时的账号继续上传".into());
+    }
+    check_local(t)?;
+    t.status = "uploading".into();
+    t.completed = 0;
+    save(app, t)?;
+    let started = Instant::now();
+    let remote = session
+        .cloud_upload(
+            Path::new(&t.local_path),
+            &t.parent_id,
+            &t.name,
+            &t.remote_path,
+            t.size,
+            &stop,
+        )
+        .await?;
+    if remote.size != t.size {
+        return Err("云端文件大小与本地不一致，请重试".into());
+    }
+    t.speed = (t.size as f64 / started.elapsed().as_secs_f64().max(0.001)) as u64;
     t.remote_file = Some(remote);
     t.status = "complete".into();
     t.completed = t.size;

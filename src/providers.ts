@@ -97,14 +97,13 @@ export type DriveAction =
 /**
  * Per-provider capabilities. This mirrors what the Rust backend exposes today,
  * so unsupported actions can be rendered disabled instead of silently failing.
- * Backend reality: every provider browses + downloads; Baidu can create folders
- * and shares; Baidu and Xunlei can upload; Quark, Baidu and Xunlei can create
- * folders, rename and delete.
+ * Backend reality: every provider browses + downloads; Baidu, Quark and Xunlei
+ * can upload, create folders, create shares, rename and delete.
  */
 export const driveCapabilities: Record<Provider, DriveAction[]> = {
-  quark: ["browse", "download", "mkdir", "rename", "delete"],
+  quark: ["browse", "download", "upload", "mkdir", "share", "rename", "delete"],
   baidu: ["browse", "download", "upload", "mkdir", "share", "rename", "delete"],
-  xunlei: ["browse", "download", "upload", "mkdir", "rename", "delete"],
+  xunlei: ["browse", "download", "upload", "mkdir", "share", "rename", "delete"],
   pan115: ["browse", "download"],
   pan123: ["browse", "download"],
   c139: ["browse", "download"],

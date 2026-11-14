@@ -901,6 +901,7 @@ async function submit() {
       }
     } else if (mode.value === "share") {
       created.value = await invoke<CreatedShare>("drive_share", {
+        provider: props.provider,
         accountId: listing.value.accountId,
         files: shareFiles.value,
         period: period.value,

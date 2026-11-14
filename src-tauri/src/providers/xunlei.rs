@@ -623,16 +623,69 @@ impl Session {
         if files.is_empty() {
             return Err("请选择要删除的文件".into());
         }
-        let ids = files.iter().map(|f| f.id.clone()).collect::<Vec<_>>();
-        let captcha = self.captcha("POST:/drive/v1/files:batchDelete").await?;
-        self.api_send(
-            reqwest::Method::POST,
-            "/files:batchDelete",
-            Some(&json!({ "ids": ids })),
-            &captcha,
-        )
-        .await?;
+        for file in files {
+            let id = identifier_component(&file.id)?;
+            let captcha = self.captcha("PATCH:/drive/v1/files").await?;
+            self.api_send(
+                reqwest::Method::PATCH,
+                &format!("/files/{id}/trash?space="),
+                Some(&json!({})),
+                &captcha,
+            )
+            .await?;
+        }
         Ok(())
+    }
+
+    /// Create a share link for personal-drive entries (OpenList thunder `POST /share`).
+    pub async fn xunlei_create_share(
+        &self,
+        files: &[DriveFile],
+        period: u32,
+        _password: &str,
+    ) -> Result<CreatedShare, String> {
+        if files.is_empty() {
+            return Err("请选择要分享的文件".into());
+        }
+        let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
+        let title = if names.len() == 1 {
+            names[0].clone()
+        } else {
+            format!("{} 等 {} 个文件", names[0], names.len())
+        };
+        let body = json!({
+            "expiration_days": if period == 0 { "-1".to_string() } else { period.to_string() },
+            "file_ids": files.iter().map(|f| f.id.clone()).collect::<Vec<_>>(),
+            "params": { "subscribe_push": "false", "withPassCodeInLink": "true" },
+            "restore_limit": "-1",
+            "share_to": "copy",
+            "title": title,
+        });
+        let captcha = self.captcha("POST:/drive/v1/share").await?;
+        let value = self
+            .api_send(reqwest::Method::POST, "/share", Some(&body), &captcha)
+            .await?;
+        if value["share_error_files"]
+            .as_array()
+            .is_some_and(|files| !files.is_empty())
+        {
+            return Err("部分文件分享失败，请稍后重试".into());
+        }
+        let url = text(&value["share_url"]);
+        let passcode = text(&value["pass_code"]);
+        if url.is_empty() {
+            return Err("创建分享失败，请稍后重试".into());
+        }
+        Ok(CreatedShare {
+            id: text(&value["share_id"]),
+            url,
+            password: passcode,
+            period,
+            created_at: now(),
+            account_id: self.cloud_identity().await?.0,
+            names,
+            cancelled: false,
+        })
     }
 
     async fn put_object(&self, params: &Value, path: &Path, size: u64) -> Result<(), String> {

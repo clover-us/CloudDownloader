@@ -317,21 +317,42 @@ pub async fn drive_enqueue(
     Ok(created)
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn drive_share(
     window: WebviewWindow,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
+    provider: Provider,
     account_id: String,
     files: Vec<DriveFile>,
     period: u32,
     password: String,
 ) -> Result<CreatedShare, String> {
     trusted(&window)?;
-    let share = session::connect(&app, Provider::Baidu)
-        .await?
-        .drive_share(&account_id, &files, period, &password)
-        .await?;
+    let session = session::connect(&app, provider).await?;
+    let share = match provider {
+        Provider::Baidu => {
+            session
+                .drive_share(&account_id, &files, period, &password)
+                .await?
+        }
+        Provider::Quark => {
+            if session.cloud_identity().await?.0 != account_id {
+                return Err("网盘账号已切换，请重新选择文件".into());
+            }
+            session.cloud_share(&files, period, &password).await?
+        }
+        Provider::Xunlei => {
+            if session.cloud_identity().await?.0 != account_id {
+                return Err("网盘账号已切换，请重新选择文件".into());
+            }
+            session
+                .xunlei_create_share(&files, period, &password)
+                .await?
+        }
+        _ => return Err("该网盘暂不支持创建分享".into()),
+    };
     state.store.lock().unwrap().save_share(&share)?;
     Ok(share)
 }
@@ -391,7 +412,7 @@ pub async fn upload_enqueue(
             }
         }
         String::new()
-    } else {
+    } else if matches!(provider, Provider::Quark | Provider::Xunlei) {
         let identity = session.cloud_identity().await?;
         if identity.0 != account_id {
             return Err("网盘账号已切换，请重新选择上传目录".into());
@@ -402,6 +423,8 @@ pub async fn upload_enqueue(
         } else {
             parent
         }
+    } else {
+        return Err("该网盘暂不支持上传".into());
     };
     let existing = state.store.lock().unwrap().uploads()?;
     let mut targets = HashSet::new();
@@ -468,13 +491,34 @@ pub async fn upload_enqueue(
                 return Err("目标目录超过 20000 项，请选择较小的目录上传".into());
             }
         }
-    } else {
+    } else if provider == Provider::Xunlei {
         for task in &records {
             if session.xunlei_find(&task.remote_path).await?.is_some() {
                 return Err(format!(
                     "目标位置已有同名文件：{}。请修改本地文件名或选择其他目录。",
                     task.name
                 ));
+            }
+        }
+    } else if provider == Provider::Quark {
+        let names: Vec<String> = records.iter().map(|t| t.name.clone()).collect();
+        for page in 1..=200 {
+            let batch = session.cloud_page(&directory, page, None).await?;
+            if let Some(found) = batch
+                .entries
+                .iter()
+                .find(|entry| names.iter().any(|name| name == &entry.file.name))
+            {
+                return Err(format!(
+                    "目标位置已有同名文件：{}。请修改本地文件名或选择其他目录。",
+                    found.file.name
+                ));
+            }
+            if batch.next.is_none() {
+                break;
+            }
+            if page == 200 {
+                return Err("目标目录超过 20000 项，请选择较小的目录上传".into());
             }
         }
     }

@@ -253,10 +253,16 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
     };
   }
   if (cmd === "drive_share") {
+    const names = (args.files as { name: string }[] | undefined)?.map((f) => f.name) ?? [];
     return {
-      url: "https://pan.baidu.com/s/1mockShare",
-      password: args.password,
+      id: `mock-${args.provider ?? "baidu"}-share`,
+      url: `https://${args.provider ?? "baidu"}.example.com/s/1mockShare`,
+      password: args.password ?? "abcd",
       period: args.period,
+      createdAt: Math.floor(Date.now() / 1000),
+      accountId: args.accountId,
+      names,
+      cancelled: false,
     };
   }
   if (cmd === "drive_rename_at") {

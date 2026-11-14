@@ -1066,6 +1066,36 @@ async fn quark_delete_batches_ids() {
 }
 
 #[tokio::test]
+async fn quark_share_creates_three_step_link() {
+    let (session, server) = fixture(
+        Provider::Quark,
+        vec![
+            json!({"success":true,"data":{"uid":"quark-fixture"}}),
+            json!({"code":0,"data":{"task_id":"task-1"}}),
+            json!({"code":0,"data":{"status":2,"share_id":"sid-1"}}),
+            json!({"code":0,"data":{"share_url":"https://pan.quark.cn/s/xyz","passcode":"abcd"}}),
+        ],
+    )
+    .await;
+    let files = vec![fixture_file("q1", "/q1", "a.txt", false)];
+    let share = session.cloud_share(&files, 7, "abcd").await.unwrap();
+    assert_eq!(share.url, "https://pan.quark.cn/s/xyz");
+    assert_eq!(share.password, "abcd");
+    assert_eq!(share.id, "sid-1");
+    assert_eq!(share.period, 7);
+    let requests = server.await.unwrap();
+    assert_eq!(requests.len(), 4);
+    assert!(requests[0].target.contains("/account/info"));
+    assert!(requests[1].target.contains("/share"));
+    let body: Value = serde_json::from_str(&requests[1].body).unwrap();
+    assert_eq!(body["fid_list"], json!(["q1"]));
+    assert_eq!(body["url_type"], 2);
+    assert_eq!(body["expired_type"], 2);
+    assert!(requests[2].target.contains("/task"));
+    assert!(requests[3].target.contains("/share/password"));
+}
+
+#[tokio::test]
 async fn xunlei_rename_sends_patch_with_name() {
     let (session, server) = fixture(
         Provider::Xunlei,
@@ -1087,10 +1117,12 @@ async fn xunlei_rename_sends_patch_with_name() {
 }
 
 #[tokio::test]
-async fn xunlei_delete_batches_ids() {
+async fn xunlei_delete_trashes_each_file() {
     let (session, server) = fixture(
         Provider::Xunlei,
         vec![
+            json!({"captcha_token":"cap"}),
+            json!({"error":"","error_code":0}),
             json!({"captcha_token":"cap"}),
             json!({"error":"","error_code":0}),
         ],
@@ -1102,9 +1134,35 @@ async fn xunlei_delete_batches_ids() {
     ];
     session.xunlei_delete(&files).await.unwrap();
     let requests = server.await.unwrap();
-    assert!(requests[1].target.ends_with("/files:batchDelete"));
+    assert_eq!(requests.len(), 4);
+    assert!(requests[1].target.contains("/files/x1/trash"));
+    assert!(requests[3].target.contains("/files/x2/trash"));
+}
+
+#[tokio::test]
+async fn xunlei_create_share_posts_share_request() {
+    let (session, server) = fixture(
+        Provider::Xunlei,
+        vec![
+            json!({"captcha_token":"cap"}),
+            json!({"error":"","error_code":0,"share_id":"sid-1","share_url":"https://pan.xunlei.com/s/xyz","pass_code":"wxyz","share_error_files":[]}),
+            json!({"sub":"u1","name":"N"}),
+        ],
+    )
+    .await;
+    let files = vec![fixture_file("xl1", "/xl1", "a.txt", false)];
+    let share = session.xunlei_create_share(&files, 7, "").await.unwrap();
+    assert_eq!(share.url, "https://pan.xunlei.com/s/xyz");
+    assert_eq!(share.password, "wxyz");
+    assert_eq!(share.id, "sid-1");
+    assert_eq!(share.period, 7);
+    let requests = server.await.unwrap();
+    assert_eq!(requests.len(), 3);
+    assert!(requests[1].target.ends_with("/share"));
     let body: Value = serde_json::from_str(&requests[1].body).unwrap();
-    assert_eq!(body["ids"], json!(["x1", "x2"]));
+    assert_eq!(body["expiration_days"], "7");
+    assert_eq!(body["file_ids"], json!(["xl1"]));
+    assert_eq!(body["share_to"], "copy");
 }
 
 #[tokio::test]

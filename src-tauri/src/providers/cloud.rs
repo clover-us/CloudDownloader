@@ -1,8 +1,11 @@
 use super::{crypto, number, text, Download, Session};
 use crate::model::*;
+use base64::Engine as _;
+use md5::{Digest, Md5};
 use reqwest::cookie::CookieStore;
 use serde::Serialize;
 use serde_json::{json, Value};
+use sha1::Sha1;
 
 pub struct Entry {
     pub file: DriveFile,
@@ -623,5 +626,367 @@ impl Session {
             }
             _ => Err("该网盘暂不支持删除文件".into()),
         }
+    }
+
+    /// Create a share link for the given personal-drive entries. Quark uses a
+    /// three-step task flow (`share` -> poll `task` -> `share/password`).
+    pub async fn cloud_share(
+        &self,
+        files: &[DriveFile],
+        period: u32,
+        password: &str,
+    ) -> Result<CreatedShare, String> {
+        if files.is_empty() {
+            return Err("请选择要分享的文件".into());
+        }
+        if !matches!(self.provider, Provider::Quark) {
+            return Err("该网盘暂不支持创建分享".into());
+        }
+        let account_id = self.cloud_identity().await?.0;
+        let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
+        let title = if names.len() == 1 {
+            names[0].clone()
+        } else {
+            format!("{} 等 {} 个文件", names[0], names.len())
+        };
+        let mut body = json!({
+            "fid_list": files.iter().map(|f| f.id.clone()).collect::<Vec<_>>(),
+            "title": title,
+            "url_type": if password.trim().is_empty() { 1 } else { 2 },
+            "expired_type": if period == 0 { 1 } else { 2 },
+        });
+        if period > 0 {
+            body["expired_at"] = json!(now().saturating_add(period as u64 * 86400) * 1000);
+        }
+        if !password.trim().is_empty() {
+            body["passcode"] = json!(password);
+        }
+        let value = check(
+            self.provider,
+            self.json(
+                self.transport
+                    .client
+                    .post(self.endpoint("https://drive-pc.quark.cn/1/clouddrive/share"))
+                    .query(&[("pr", "ucpro".to_string()), ("fr", "pc".to_string())])
+                    .header("Referer", "https://pan.quark.cn/")
+                    .json(&body),
+            )
+            .await?,
+        )?;
+        let task_id = text(&value["data"]["task_id"]);
+        if task_id.is_empty() {
+            return Err("创建分享任务失败，请稍后重试".into());
+        }
+        let mut pwd_id = String::new();
+        for retry in 0..10u32 {
+            let value = check(
+                self.provider,
+                self.json(
+                    self.transport
+                        .client
+                        .get(self.endpoint("https://drive-pc.quark.cn/1/clouddrive/task"))
+                        .query(&[
+                            ("pr", "ucpro".to_string()),
+                            ("fr", "pc".to_string()),
+                            ("task_id", task_id.clone()),
+                            ("retry_index", retry.to_string()),
+                        ])
+                        .header("Referer", "https://pan.quark.cn/"),
+                )
+                .await?,
+            )?;
+            match value["data"]["status"].as_i64() {
+                Some(2) => {
+                    pwd_id = text(&value["data"]["share_id"]);
+                    break;
+                }
+                Some(3) => return Err("创建分享失败，请稍后重试".into()),
+                _ => {
+                    if retry < 9 {
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    }
+                }
+            }
+        }
+        if pwd_id.is_empty() {
+            return Err("创建分享超时，请稍后重试".into());
+        }
+        let value = check(
+            self.provider,
+            self.json(
+                self.transport
+                    .client
+                    .post(self.endpoint("https://drive-pc.quark.cn/1/clouddrive/share/password"))
+                    .query(&[("pr", "ucpro".to_string()), ("fr", "pc".to_string())])
+                    .header("Referer", "https://pan.quark.cn/")
+                    .json(&json!({ "share_id": pwd_id })),
+            )
+            .await?,
+        )?;
+        let url = text(&value["data"]["share_url"]);
+        let passcode = text(&value["data"]["passcode"]);
+        if url.is_empty() {
+            return Err("创建分享失败，请稍后重试".into());
+        }
+        Ok(CreatedShare {
+            id: pwd_id,
+            url,
+            password: passcode,
+            period,
+            created_at: now(),
+            account_id,
+            names,
+            cancelled: false,
+        })
+    }
+
+    /// Upload one local file into a Quark personal drive folder.
+    ///
+    /// Quark stores blobs on Aliyun OSS: the client asks the API for a resumable
+    /// upload session, exchanges a canonical `auth_meta` string for a short-lived
+    /// OSS `auth_key`, PUTs the bytes straight to `pds.quark.cn`, then asks the
+    /// API to complete the multipart upload and finalise the file entry. The
+    /// whole file is sent as a single part (partNumber=1), which avoids the
+    /// fragile SHA1-midstate `x-oss-hash-ctx` that multi-part uploads require.
+    pub async fn cloud_upload(
+        &self,
+        local_path: &std::path::Path,
+        parent_id: &str,
+        name: &str,
+        remote_path: &str,
+        size: u64,
+        stop: &std::sync::atomic::AtomicBool,
+    ) -> Result<DriveFile, String> {
+        use std::sync::atomic::Ordering;
+        if !matches!(self.provider, Provider::Quark) {
+            return Err("该网盘暂不支持上传".into());
+        }
+        let bytes = tokio::fs::read(local_path)
+            .await
+            .map_err(|_| "读取上传文件失败")?;
+        if bytes.len() as u64 != size {
+            return Err("本地文件已修改，请移除该任务并重新选择文件".into());
+        }
+        if stop.load(Ordering::Relaxed) {
+            return Err("__paused".into());
+        }
+        let md5 = format!("{:x}", Md5::digest(&bytes));
+        let sha1 = format!("{:x}", Sha1::digest(&bytes));
+        let parent = if parent_id.is_empty() { "0" } else { parent_id };
+        let now_ms = now().saturating_mul(1000);
+        let query = [("pr", "ucpro".to_string()), ("fr", "pc".to_string())];
+        let value = check(
+            self.provider,
+            self.json(
+                self.transport
+                    .client
+                    .post(self.endpoint("https://drive-pc.quark.cn/1/clouddrive/file/upload/pre"))
+                    .query(&query)
+                    .header("Referer", "https://pan.quark.cn/")
+                    .json(&json!({
+                        "ccp_hash_update": true,
+                        "parallel_upload": true,
+                        "pdir_fid": parent,
+                        "dir_name": "",
+                        "size": size,
+                        "file_name": name,
+                        "format_type": "application/octet-stream",
+                        "l_updated_at": now_ms,
+                        "l_created_at": now_ms,
+                    })),
+            )
+            .await?,
+        )?;
+        let data = &value["data"];
+        let task_id = text(&data["task_id"]);
+        let upload_id = text(&data["upload_id"]);
+        let obj_key = text(&data["obj_key"]);
+        let bucket = {
+            let bucket = text(&data["bucket"]);
+            if bucket.is_empty() {
+                "ul-zb".to_string()
+            } else {
+                bucket
+            }
+        };
+        let auth_info = data["auth_info"].clone();
+        let callback = data["callback"].clone();
+        if task_id.is_empty() || upload_id.is_empty() || obj_key.is_empty() {
+            return Err("夸克返回的上传会话无效，请稍后重试".into());
+        }
+        check(
+            self.provider,
+            self.json(
+                self.transport
+                    .client
+                    .post(self.endpoint("https://drive-pc.quark.cn/1/clouddrive/file/update/hash"))
+                    .query(&query)
+                    .header("Referer", "https://pan.quark.cn/")
+                    .json(&json!({ "task_id": task_id, "md5": md5, "sha1": sha1 })),
+            )
+            .await?,
+        )?;
+        let oss_date = chrono::Utc::now()
+            .format("%a, %d %b %Y %H:%M:%S GMT")
+            .to_string();
+        let ua = "aliyun-sdk-js/1.0.0 Chrome Mobile 139.0.0.0 on Google Nexus 5 (Android 6.0)";
+        let put_key = obj_key.trim_start_matches('/');
+        let auth_meta = format!(
+            "PUT\n\napplication/octet-stream\n{oss_date}\nx-oss-date:{oss_date}\nx-oss-user-agent:{ua}\n/{bucket}/{put_key}?partNumber=1&uploadId={upload_id}"
+        );
+        let value = check(
+            self.provider,
+            self.json(
+                self.transport
+                    .client
+                    .post(self.endpoint("https://drive-pc.quark.cn/1/clouddrive/file/upload/auth"))
+                    .query(&query)
+                    .header("Referer", "https://pan.quark.cn/")
+                    .json(&json!({ "task_id": task_id, "auth_info": auth_info, "auth_meta": auth_meta })),
+            )
+            .await?,
+        )?;
+        let auth_key = text(&value["data"]["auth_key"]);
+        if auth_key.is_empty() {
+            return Err("夸克上传鉴权失败，请稍后重试".into());
+        }
+        let response = self
+            .transport
+            .client
+            .put(format!(
+                "https://{bucket}.pds.quark.cn/{put_key}?partNumber=1&uploadId={upload_id}"
+            ))
+            .header("Content-Type", "application/octet-stream")
+            .header("x-oss-date", &oss_date)
+            .header("x-oss-user-agent", ua)
+            .header("Authorization", &auth_key)
+            .body(bytes)
+            .send()
+            .await
+            .map_err(|_| "连接夸克云端存储失败，请稍后重试")?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "夸克云端存储上传失败（HTTP {}），请稍后重试",
+                response.status().as_u16()
+            ));
+        }
+        let etag = response
+            .headers()
+            .get("etag")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .trim_matches('"')
+            .to_string();
+        let xml = format!(
+            "<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>\"{etag}\"</ETag></Part></CompleteMultipartUpload>"
+        );
+        let xml_md5 = base64::engine::general_purpose::STANDARD.encode(Md5::digest(xml.as_bytes()));
+        let callback_b64 = base64::engine::general_purpose::STANDARD.encode(
+            serde_json::to_string(&callback)
+                .unwrap_or_default()
+                .as_bytes(),
+        );
+        let ua2 = "aliyun-sdk-js/1.0.0 Chrome 139.0.0.0 on OS X 10.15.7 64-bit";
+        let auth_meta2 = format!(
+            "POST\n{xml_md5}\napplication/xml\n{oss_date}\nx-oss-callback:{callback_b64}\nx-oss-date:{oss_date}\nx-oss-user-agent:{ua2}\n/{bucket}/{put_key}?uploadId={upload_id}"
+        );
+        let value = check(
+            self.provider,
+            self.json(
+                self.transport
+                    .client
+                    .post(self.endpoint("https://drive-pc.quark.cn/1/clouddrive/file/upload/auth"))
+                    .query(&query)
+                    .header("Referer", "https://pan.quark.cn/")
+                    .json(&json!({ "task_id": task_id, "auth_meta": auth_meta2, "auth_info": auth_info })),
+            )
+            .await?,
+        )?;
+        let auth_key2 = text(&value["data"]["auth_key"]);
+        if auth_key2.is_empty() {
+            return Err("夸克上传鉴权失败，请稍后重试".into());
+        }
+        let response = self
+            .transport
+            .client
+            .post(format!(
+                "https://{bucket}.pds.quark.cn/{put_key}?uploadId={upload_id}"
+            ))
+            .header("Content-Type", "application/xml")
+            .header("x-oss-date", &oss_date)
+            .header("x-oss-user-agent", ua2)
+            .header("Authorization", &auth_key2)
+            .header("x-oss-callback", &callback_b64)
+            .header("Content-MD5", &xml_md5)
+            .body(xml)
+            .send()
+            .await
+            .map_err(|_| "夸克云端合并失败，请稍后重试")?;
+        if !matches!(response.status().as_u16(), 200 | 203) {
+            return Err(format!(
+                "夸克云端合并失败（HTTP {}），请稍后重试",
+                response.status().as_u16()
+            ));
+        }
+        let value = check(
+            self.provider,
+            self.json(
+                self.transport
+                    .client
+                    .post(
+                        self.endpoint("https://drive-pc.quark.cn/1/clouddrive/file/upload/finish"),
+                    )
+                    .query(&query)
+                    .header("Referer", "https://pan.quark.cn/")
+                    .json(&json!({ "task_id": task_id, "obj_key": obj_key })),
+            )
+            .await?,
+        )?;
+        let mut fid = text(&value["data"]["fid"]);
+        if fid.is_empty() {
+            'search: for page in 1..=20u32 {
+                let value = check(
+                    self.provider,
+                    self.json(
+                        self.transport
+                            .client
+                            .get(self.endpoint("https://drive-pc.quark.cn/1/clouddrive/file/sort"))
+                            .query(&[
+                                ("pr", "ucpro".to_string()),
+                                ("fr", "pc".to_string()),
+                                ("pdir_fid", parent.to_string()),
+                                ("_page", page.to_string()),
+                                ("_size", "100".to_string()),
+                                ("_sort", "file_type:asc,updated_at:desc".to_string()),
+                            ])
+                            .header("Referer", "https://pan.quark.cn/"),
+                    )
+                    .await?,
+                )?;
+                let rows = value["data"]["list"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                for row in &rows {
+                    if text(&row["file_name"]) == name && row["dir"].as_bool() != Some(true) {
+                        fid = text(&row["fid"]);
+                        break 'search;
+                    }
+                }
+                if rows.len() < 100 {
+                    break;
+                }
+            }
+        }
+        Ok(DriveFile {
+            id: fid,
+            path: remote_path.to_string(),
+            name: name.to_string(),
+            size,
+            is_dir: false,
+            modified: now(),
+            created: now(),
+            md5,
+        })
     }
 }
