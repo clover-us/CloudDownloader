@@ -32,6 +32,11 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["clouddownloader"]
+      }
+    },
     "updater": {
       "endpoints": [
         "https://github.com/clover-us/CloudDownloader/releases/latest/download/latest.json"

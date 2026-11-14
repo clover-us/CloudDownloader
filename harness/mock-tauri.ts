@@ -105,6 +105,7 @@ const state = {
   } as Record<string, string>,
   calls: [] as { cmd: string; args: unknown }[],
   uploads: [] as Record<string, unknown>[],
+  handoffs: [] as string[],
   refreshDelayMs: Number((window as any).__MOCK_SLOW__ || 0),
 };
 
@@ -430,6 +431,23 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
       );
     return { done: ids.size, failed: [] };
   }
+  // Browser hand-off: the backend queues the link, then emits a wake-up event.
+  if (cmd === "take_handoff") {
+    const links = [...state.handoffs];
+    state.handoffs.length = 0;
+    return links;
+  }
+  if (cmd === "inspect_download") {
+    const link = String(args.text ?? "").trim();
+    const name = link.split("/").pop()?.split("?")[0] || "file.bin";
+    return {
+      kind: "direct",
+      url: link,
+      name,
+      size: 1024,
+      rangeSupported: true,
+    };
+  }
   // feat merge: settings + in-app updater.
   if (cmd === "settings_get") return { ...settings };
   if (cmd === "settings_set") {
@@ -484,6 +502,12 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
   setAllLoggedOut() {
     for (const p of ALL) state.loggedIn[p] = false;
     emit("tasks-changed");
+  },
+  // Mirrors the backend: the link is queued before the event is emitted, so a
+  // late listener still sees it through take_handoff.
+  handoff(link: string) {
+    state.handoffs.push(link);
+    emit("handoff", null);
   },
   lastCall(cmd: string) {
     return [...state.calls].reverse().find((c) => c.cmd === cmd);

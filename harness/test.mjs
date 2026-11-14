@@ -808,6 +808,33 @@ await page.waitForFunction(
   () => document.querySelectorAll("article.task-row").length === 6,
 );
 
+// --- M. Browser hand-off (clouddownloader://) ---
+await mock("handoff", "https://example.com/files/report.pdf");
+await page.waitForFunction(
+  () =>
+    document.querySelector(".unified-download textarea")?.value ===
+    "https://example.com/files/report.pdf",
+);
+check(
+  "M1 handoff fills the download box",
+  (await page.locator(".unified-download textarea").inputValue()) ===
+    "https://example.com/files/report.pdf",
+);
+await page.waitForFunction(() =>
+  window.__MOCK__.state.calls.some((c) => c.cmd === "inspect_download"),
+);
+await page.waitForFunction(() =>
+  document.querySelector(".unified-type")?.textContent?.includes("普通文件链接"),
+);
+check(
+  "M2 handoff parses the link",
+  (await page.locator(".unified-type").innerText()).includes("普通文件链接"),
+);
+check(
+  "M3 handoff queue is drained once",
+  (await page.evaluate(() => window.__MOCK__.state.handoffs.length)) === 0,
+);
+
 check(
   "Z1 no page errors",
   pageErrors.length === 0,

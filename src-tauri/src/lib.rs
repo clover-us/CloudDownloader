@@ -6,6 +6,7 @@ mod download_commands;
 mod download_errors;
 mod drive_commands;
 mod engine;
+mod handoff;
 mod migration;
 mod model;
 mod pan115_session;
@@ -34,6 +35,7 @@ use std::{
     time::Duration,
 };
 use tauri::{Emitter, Manager, State, WebviewWindow};
+use tauri_plugin_deep_link::DeepLinkExt;
 
 struct AppState {
     store: Mutex<store::Store>,
@@ -230,6 +232,17 @@ async fn settings_set(
         (saved.upload_concurrency as usize * saved.upload_part_concurrency as usize).max(1),
     );
     Ok(saved)
+}
+
+/// 取走浏览器通过 `clouddownloader://` 交过来的链接；前端挂载和收到 `handoff`
+/// 事件后各调用一次，队列只清空一次，冷启动和重载都不会丢。
+#[tauri::command]
+fn take_handoff(window: WebviewWindow, app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    trusted(&window)?;
+    Ok(app
+        .try_state::<handoff::Inbox>()
+        .map(|inbox| inbox.drain())
+        .unwrap_or_default())
 }
 
 async fn start_task(
@@ -1005,9 +1018,16 @@ fn bt_progress(source: &BtSource, value: &serde_json::Value) -> (u64, u64) {
 
 pub fn run() {
     let app = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             tray::restore(app);
+            // A protocol click starts a new process whose only argument is the URI.
+            for argument in argv.iter().skip(1) {
+                if let Some(link) = handoff::parse(argument) {
+                    handoff::push(app, link);
+                }
+            }
         }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1076,6 +1096,18 @@ pub fn run() {
                 exiting: AtomicBool::new(false),
                 bt_jobs: Default::default(),
             });
+            app.manage(handoff::Inbox::default());
+            // Registering on every start keeps the scheme pointing at this executable,
+            // which portable builds and in-place updates would otherwise break. A
+            // failure only costs the browser hand-off, so startup continues.
+            let _ = app.deep_link().register_all();
+            // Cold start: this process was launched by the protocol itself, so the
+            // link is queued for the front end instead of showing an empty window.
+            for argument in std::env::args().skip(1) {
+                if let Some(link) = handoff::parse(&argument) {
+                    handoff::enqueue(app.handle(), link);
+                }
+            }
             if let Some(main) = app.get_webview_window("main") {
                 let handle = app.handle().clone();
                 main.on_window_event(move |event| {
@@ -1122,6 +1154,7 @@ pub fn run() {
             set_directory,
             settings_get,
             settings_set,
+            take_handoff,
             enqueue,
             direct_commands::enqueue_direct,
             download_commands::inspect_download,

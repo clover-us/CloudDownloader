@@ -165,6 +165,7 @@ let interval: ReturnType<typeof setInterval> | undefined;
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let unlisten: UnlistenFn | undefined;
 let unlistenLoginClosed: UnlistenFn | undefined;
+let unlistenHandoff: UnlistenFn | undefined;
 let loadingSnapshot = false;
 const activeStatuses = ["active", "waiting", "resolving", "seeding"];
 const completed = computed(() =>
@@ -705,12 +706,25 @@ async function folder(id?: string) {
     error.value = String(e);
   }
 }
+/**
+ * 浏览器通过 clouddownloader:// 交过来的链接。后端先入队再发事件，所以这里只
+ * 负责取走队列：挂载时和每次事件各取一次，避免冷启动/重载时漏掉或重复处理。
+ */
+async function receiveHandoff() {
+  const links = (await invoke<string[] | null>("take_handoff")) ?? [];
+  if (!links.length) return;
+  tab.value = "all";
+  await nextTick();
+  for (const link of links) await downloadBox.value?.receive(link);
+}
 onMounted(async () => {
   await refresh();
   unlisten = await listen("tasks-changed", refresh);
   unlistenLoginClosed = await listen<string>("login-window-closed", (event) => {
     void cancelLogin(event.payload as Provider);
   });
+  unlistenHandoff = await listen("handoff", () => void receiveHandoff());
+  await receiveHandoff();
   await Promise.all(providers.map((p) => checkAccount(p.id, true)));
   accountsReady.value = true;
   if (state.value.settings.autoCheckUpdates)
@@ -724,6 +738,7 @@ onUnmounted(() => {
   clearTimeout(toastTimer);
   unlisten?.();
   unlistenLoginClosed?.();
+  unlistenHandoff?.();
   document.removeEventListener("keydown", onLogoutKeydown);
 });
 </script>

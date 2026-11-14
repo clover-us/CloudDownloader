@@ -22,4 +22,7 @@
 
 !macro NSIS_HOOK_PREUNINSTALL
   !insertmacro _CloudDownloaderStopEngine
+  ; The app registers clouddownloader:// in HKCU on every start; leaving the key
+  ; behind would point Explorer at a removed executable.
+  DeleteRegKey HKCU "Software\Classes\clouddownloader"
 !macroend

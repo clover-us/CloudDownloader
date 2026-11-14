@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -81,7 +81,7 @@ watch(
     if (value && !adding.value) connections.value = value;
   },
 );
-defineExpose({ focus: () => input.value?.focus() });
+defineExpose({ focus: () => input.value?.focus(), receive });
 const bytes = (n: number) => {
   if (!n) return "0 B";
   const i = Math.min(4, Math.floor(Math.log(n) / Math.log(1024)));
@@ -152,6 +152,20 @@ watch(text, () => {
   localFile.value = null;
 });
 onBeforeUnmount(cancel);
+
+/**
+ * 浏览器通过 clouddownloader:// 交过来的链接：填进输入框并立即识别。
+ * 先等输入框 watcher 跑完，否则它会在识别结果返回后清掉 result。
+ */
+async function receive(value: string) {
+  const link = value.trim();
+  if (!link) return;
+  text.value = link;
+  code.value = "";
+  await nextTick();
+  input.value?.focus();
+  await inspect();
+}
 
 async function accept(value: Inspection, request: number) {
   if (request !== version) {
