@@ -5,10 +5,13 @@ import { getCurrentWebview, type DragDropEvent } from "@tauri-apps/api/webview";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
+  ArrowDown,
   ArrowDownToLine,
   ArrowDownNarrowWide,
+  ArrowUp,
   Check,
   ChevronRight,
+  ChevronsUpDown,
   CloudUpload,
   Copy,
   File,
@@ -247,6 +250,10 @@ function applySort(
 }
 function isSort(key: "name" | "size" | "modified" | "created", asc: boolean) {
   return sortKey.value === key && sortAsc.value === asc;
+}
+function sortHeader(key: "name" | "size" | "modified" | "created") {
+  if (sortKey.value === key) applySort(key, !sortAsc.value);
+  else applySort(key, key === "name");
 }
 const filterActive = computed(() => filterTypes.value.length > 0);
 function openFilter() {
@@ -934,7 +941,7 @@ onMounted(async () => {
       >
     </div>
 
-    <div v-if="!selected.length" class="drive-toolbar">
+    <div class="drive-toolbar">
       <span class="provider-tag">{{ providerName(provider) }}</span>
       <form class="drive-search" @submit.prevent="search">
         <Search :size="16" /><input
@@ -1144,7 +1151,7 @@ onMounted(async () => {
       </div>
     </div>
 
-    <div v-else class="drive-batchbar">
+    <div v-if="viewMode === 'grid' && selected.length" class="drive-batchbar">
       <span class="batch-count">已选中 <b>{{ selected.length }}</b> 项</span>
       <button class="text-button batch-clear" @click="selected = []">
         取消选中
@@ -1222,14 +1229,97 @@ onMounted(async () => {
       :class="{ 'view-grid': viewMode === 'grid' }"
       :aria-busy="loading"
     >
-      <div class="drive-file-head">
+      <div class="drive-file-head" :class="{ 'head-selected': selected.length }">
         <input
           type="checkbox"
           :checked="allSelected"
           :disabled="busy || !visibleFiles.length"
           aria-label="全选网盘文件（最多100项）"
           @change="selectAll"
-        /><span>文件名称</span><span>大小</span><span>修改时间</span>
+        />
+        <div class="head-name">
+          <template v-if="!selected.length">
+            <button class="col-sort" @click="sortHeader('name')">
+              文件名称
+              <ArrowUp
+                v-if="sortKey === 'name' && sortAsc"
+                :size="12"
+                class="sort-ind"
+              /><ArrowDown
+                v-else-if="sortKey === 'name'"
+                :size="12"
+                class="sort-ind"
+              /><ChevronsUpDown v-else :size="12" class="sort-ind muted" />
+            </button>
+          </template>
+          <template v-else>
+            <span class="batch-count"
+              >已选中 <b>{{ selected.length }}</b> 项</span
+            >
+            <button class="text-button batch-clear" @click="selected = []">
+              取消选中
+            </button>
+            <div class="batch-actions">
+              <button class="batch-btn" :disabled="busy" @click="download">
+                <LoaderCircle
+                  v-if="adding"
+                  class="spinning"
+                  :size="15"
+                /><ArrowDownToLine v-else :size="15" />下载
+              </button>
+              <button
+                class="batch-btn"
+                :disabled="!canShare || busy"
+                :title="
+                  canShare
+                    ? '创建分享链接'
+                    : `${providerName(provider)}暂不支持创建分享`
+                "
+                @click="prepareShare()"
+              >
+                <Share2 :size="15" />分享
+              </button>
+              <button
+                class="batch-btn"
+                :disabled="!canDelete || busy"
+                :title="canDelete ? '删除所选' : '暂不支持删除，敬请期待'"
+              >
+                <Trash2 :size="15" />删除
+              </button>
+              <button
+                class="batch-btn icon"
+                disabled
+                title="更多操作，敬请期待"
+              >
+                <MoreHorizontal :size="16" />
+              </button>
+            </div>
+          </template>
+        </div>
+        <button class="col-sort" @click="sortHeader('size')">
+          大小
+          <ArrowUp
+            v-if="sortKey === 'size' && sortAsc"
+            :size="12"
+            class="sort-ind"
+          /><ArrowDown
+            v-else-if="sortKey === 'size'"
+            :size="12"
+            class="sort-ind"
+          /><ChevronsUpDown v-else :size="12" class="sort-ind muted" />
+        </button>
+        <button class="col-sort" @click="sortHeader('modified')">
+          修改时间
+          <ArrowUp
+            v-if="sortKey === 'modified' && sortAsc"
+            :size="12"
+            class="sort-ind"
+          /><ArrowDown
+            v-else-if="sortKey === 'modified'"
+            :size="12"
+            class="sort-ind"
+          /><ChevronsUpDown v-else :size="12" class="sort-ind muted" />
+        </button>
       </div>
       <div
         v-for="file in visibleFiles"

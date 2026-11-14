@@ -136,10 +136,10 @@ check(
   (await page.locator(".drive-toolbar button", { hasText: "新建文件夹" }).count()) === 0,
 );
 await page.locator(".drive-file-row").first().locator('input[type="checkbox"]').check();
-await page.waitForSelector(".drive-batchbar");
-const batch = page.locator(".drive-batchbar");
-check("D7 batch bar shows selection", (await batch.innerText()).includes("已选中"));
-check("D8 share disabled for download-only provider", await batch.locator("button", { hasText: "分享" }).isDisabled());
+await page.waitForSelector(".drive-file-head .batch-actions");
+const batch = page.locator(".drive-file-head");
+check("D7 header batch bar shows selection", (await batch.innerText()).includes("已选中"));
+check("D8 share disabled for download-only provider", await batch.locator(".batch-actions button", { hasText: "分享" }).isDisabled());
 await shot("05b-drive-pan115-selection");
 await batch.locator("button.batch-clear").click();
 await page.locator(".drive-providers button", { hasText: "百度网盘" }).click();
@@ -181,6 +181,15 @@ check(
     (await page.locator(".drive-scope").innerText()).includes("全库"),
 );
 await shot("05g-drive-sort-created");
+
+// --- D4b. Column headers are clickable to sort ---
+await page.locator(".drive-file-head .col-sort", { hasText: "大小" }).click();
+await page.waitForFunction(() => window.__MOCK__.lastCall("dir_list_all")?.args?.sortKey === "size");
+check(
+  "D17 header click sorts by size",
+  (await page.locator(".drive-file-head .col-sort", { hasText: "大小" }).count()) === 1,
+);
+await shot("05h-drive-header-sort");
 
 // --- D5. Folder upload shows a per-directory progress card ---
 await page.locator(".menu-anchor").first().hover();

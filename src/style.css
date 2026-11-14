@@ -1239,9 +1239,95 @@ button.directory:hover {
   position: sticky;
   top: 0;
   z-index: 1;
+  height: 48px;
+  padding-top: 0;
+  padding-bottom: 0;
   background: var(--surface-soft);
   color: var(--muted);
   font-size: 11px;
+}
+.drive-file-head .head-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.drive-file-head .col-sort {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.drive-file-head .col-sort:hover {
+  color: var(--accent);
+}
+.drive-file-head .sort-ind {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+.drive-file-head .sort-ind.muted {
+  color: var(--muted);
+  opacity: 0.55;
+}
+.drive-file-head.head-selected {
+  background: var(--surface-soft);
+}
+.drive-file-head .batch-count {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.drive-file-head .batch-count b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.drive-file-head .batch-clear {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.drive-file-head .batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.drive-file-head .batch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  padding: 3px 9px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.drive-file-head .batch-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+.drive-file-head .batch-btn.icon {
+  padding: 3px 5px;
+  color: var(--muted);
+}
+.drive-file-head .batch-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 .drive-file-row:hover {
   background: var(--surface-hover);

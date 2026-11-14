@@ -27,12 +27,12 @@
 
 ## 下载
 
-最新版本 **0.6.4**：全新文件管理器式「我的网盘」，支持批量操作、行悬浮操作、排序与筛选、列表 / 网格视图、文件夹上传（保留目录结构），并支持迅雷新建文件夹；下载文件夹改为后台解析，点击后即可返回。
+最新版本 **0.6.5**：文件管理器式「我的网盘」持续完善——批量操作并入列表头，选中态与普通表头保持同尺寸同底色；列头支持点击「文件名称 / 大小 / 修改时间」切换排序；并保留行悬浮操作、排序与筛选、列表 / 网格视图、文件夹上传（保留目录结构）、迅雷新建文件夹，以及下载文件夹后台解析。
 
 | Windows 安装版 · 推荐                 | 便携版                                 |
 | :------------------------------------ | :------------------------------------- |
 | 自动创建快捷方式，适合日常使用。      | 解压即可运行，保留完整目录结构。       |
-| **[↓ 下载 v0.6.4 安装包][installer]** | **[↓ 下载 v0.6.4 便携 ZIP][portable]** |
+| **[↓ 下载 v0.6.5 安装包][installer]** | **[↓ 下载 v0.6.5 便携 ZIP][portable]** |
 
 [全部版本与更新说明][releases] · [SHA-256 校验文件][checksums]
 
@@ -138,7 +138,7 @@ npm run tauri dev -- --no-watch
 
 ## 文档与致谢
 
-[使用指南](docs/usage.md) · [开发文档](docs/development.md) · [验证记录](VERIFICATION.md) · [更新说明](docs/release-0.6.4.md) · [第三方许可](third-party/notices/)
+[使用指南](docs/usage.md) · [开发文档](docs/development.md) · [验证记录](VERIFICATION.md) · [更新说明](docs/release-0.6.5.md) · [第三方许可](third-party/notices/)
 
 界面布局与蓝白配色参考 [Motrix](https://github.com/agalwood/Motrix)，保留本项目的统一下载入口与多网盘工作区。
 
@@ -146,7 +146,7 @@ npm run tauri dev -- --no-watch
 
 <p align="center"><sub>sixunited · 作者 <a href="https://github.com/sclliang">sclliang</a></sub></p>
 
-[installer]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.4/CloudDownloader_0.6.4_x64-setup.exe
-[portable]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.4/CloudDownloader-0.6.4-win-x64.zip
-[checksums]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.4/SHA256SUMS-0.6.4.txt
+[installer]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.5/CloudDownloader_0.6.5_x64-setup.exe
+[portable]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.5/CloudDownloader-0.6.5-win-x64.zip
+[checksums]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.5/SHA256SUMS-0.6.5.txt
 [releases]: https://github.com/clover-us/CloudDownloader/releases
