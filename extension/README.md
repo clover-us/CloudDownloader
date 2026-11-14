@@ -11,6 +11,16 @@
 3. 打开扩展的「选项」，点「测试连接」确认显示「已连接」（需先启动 CloudDownloader）。
 4. Chrome 可能提示扩展可以读取浏览记录和 Cookie，这是它把登录状态转交给下载器的前提。
 
+## 打包
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/pack-extension.ps1
+```
+
+输出 `package/clouddownloader-extension-<版本>.zip`，根目录就是 `manifest.json`，可直接上传到
+Chrome Web Store / Edge 加载项商店，也可以解压后按上面的步骤用「加载已解压的扩展程序」安装。
+升级时把旧目录换成新的再点一次「重新加载」即可，扩展 ID 不变，设置会保留。
+
 ## 行为
 
 - 只接管 `http(s)` 直链；`blob:`、`data:` 这类浏览器内部地址没有可供外部下载的 URL，会被跳过。

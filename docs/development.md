@@ -79,6 +79,8 @@ powershell -ExecutionPolicy Bypass -File scripts/updater-key.ps1
 - `src-tauri/src/verification.rs`：仅开发构建启用的真实账号验证程序；只上传生成的测试文件。
 - `third-party/notices/`：第三方许可资料。
 - `scripts/updater-key.ps1`、`scripts/latest-json.ps1`：自动更新签名密钥与发布清单生成。
+- `scripts/pack-extension.ps1`：把 `extension/` 打成可上传商店或解压安装的 zip（`package/clouddownloader-extension-<版本>.zip`）。
+- `extension/`：浏览器扩展（MV3），监听 `chrome.downloads.onCreated` 并通过 `127.0.0.1:17890` 与 `src-tauri/src/bridge.rs` 通信。
 
 aria2 的固定版本和校验值见 `third-party/notices/README.txt`。本项目未复制或运行 LinkSwift 脚本。
 
