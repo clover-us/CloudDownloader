@@ -37,6 +37,14 @@ pub fn check(provider: Provider, value: Value) -> Result<Value, String> {
                     .as_str(),
                 )
         }
+        Provider::Xunlei => {
+            value
+                .get("error")
+                .is_none_or(|error| error.is_null() || error.as_str() == Some(""))
+                && value
+                    .get("error_code")
+                    .is_none_or(|code| code.as_i64() == Some(0))
+        }
         _ => false,
     };
     if valid {
@@ -163,6 +171,14 @@ pub fn entry(provider: Provider, raw: &Value, parent: &str) -> Result<Entry, Str
             0,
             text(&raw["md5"]),
         ),
+        Provider::Xunlei => (
+            text(&raw["id"]),
+            text(&raw["name"]),
+            number(&raw["size"]),
+            text(&raw["kind"]) == "drive#folder",
+            0,
+            text(&raw["hash"]),
+        ),
         _ => return Err("此网盘使用专用文件接口".into()),
     };
     let component = path_component(provider, &id)?;
@@ -246,6 +262,7 @@ impl Session {
             Provider::Uc => self.uc_identity().await?,
             Provider::Lanzou => self.lanzou_identity().await?,
             Provider::Ilanzou => self.ilanzou_identity().await?,
+            Provider::Xunlei => self.xunlei_identity().await?,
             _ => return Err("此网盘使用专用文件接口".into()),
         };
         Ok((
@@ -303,6 +320,7 @@ impl Session {
             Provider::Uc => self.uc_page(path, &id, page).await,
             Provider::Lanzou => self.lanzou_page(path, &id, page).await,
             Provider::Ilanzou => self.ilanzou_page(path, &id, page).await,
+            Provider::Xunlei => self.xunlei_page(path, &id, page, cursor).await,
             _ => Err("此网盘使用专用文件接口".into()),
         }
     }
@@ -385,6 +403,7 @@ impl Session {
             Provider::Uc => return self.uc_download(&fresh.file.id, None).await,
             Provider::Lanzou => return self.lanzou_personal_download(&fresh.file.id).await,
             Provider::Ilanzou => self.ilanzou_download(&fresh.file.id, None).await?,
+            Provider::Xunlei => self.xunlei_personal_download(&fresh.file.id).await?,
             _ => return Err("此网盘使用专用文件接口".into()),
         };
         self.download_descriptor(url)

@@ -1,6 +1,7 @@
 export type Provider =
   | "quark"
   | "baidu"
+  | "xunlei"
   | "pan115"
   | "pan123"
   | "c139"
@@ -17,6 +18,7 @@ export const providers: {
 }[] = [
   { id: "quark", name: "夸克网盘", initial: "夸", color: "#397cf3" },
   { id: "baidu", name: "百度网盘", initial: "百", color: "#388cf8" },
+  { id: "xunlei", name: "迅雷网盘", initial: "迅", color: "#2e7bf6" },
   { id: "pan115", name: "115 网盘", initial: "115", color: "#287bd7" },
   { id: "pan123", name: "123 云盘", initial: "123", color: "#3671e4" },
   { id: "c139", name: "139 云盘", initial: "139", color: "#27a380" },
@@ -37,6 +39,8 @@ export function shareProvider(text: string): Provider | undefined {
       const host = url.hostname;
       if (host === "pan.quark.cn") return "quark";
       if (host === "pan.baidu.com") return "baidu";
+      if (host === "pan.xunlei.com" || host === "www.pan.xunlei.com")
+        return "xunlei";
       if (
         [
           "115.com",

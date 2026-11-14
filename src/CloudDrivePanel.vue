@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   ArrowDownToLine,
   ChevronRight,
@@ -10,6 +11,7 @@ import {
   LoaderCircle,
   RefreshCw,
   Search,
+  Upload,
   UserRound,
 } from "@lucide/vue";
 import { type DriveFile, formatBytes, formatDate } from "./cloud";
@@ -23,6 +25,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   login: [];
   downloaded: [];
+  uploaded: [];
   directory: [];
   changed: [];
   notice: [message: string];
@@ -40,8 +43,10 @@ const selected = ref<string[]>([]);
 const keyword = ref("");
 const loading = ref(false);
 const adding = ref(false);
+const uploading = ref(false);
 const error = ref("");
 const page = ref(1);
+const canUpload = computed(() => props.provider === "xunlei");
 let disposed = false;
 let reloadAfterLogin = false;
 const busy = computed(() => loading.value || adding.value);
@@ -149,6 +154,35 @@ async function download() {
     if (!disposed) adding.value = false;
   }
 }
+async function upload() {
+  if (busy.value || uploading.value || !listing.value) return;
+  try {
+    const picked = await open({ multiple: true, directory: false });
+    const paths = (Array.isArray(picked) ? picked : picked ? [picked] : []).filter(
+      (value): value is string => typeof value === "string",
+    );
+    if (!paths.length) return;
+    uploading.value = true;
+    error.value = "";
+    const directory = crumbs.value[crumbs.value.length - 1]!.path;
+    const result = await invoke<unknown[]>("upload_enqueue", {
+      provider: props.provider,
+      accountId: listing.value.accountId,
+      directory,
+      paths,
+      concurrency: 2,
+    });
+    if (!disposed) {
+      emit("notice", `已添加 ${result.length} 个上传任务`);
+      emit("changed");
+      emit("uploaded");
+    }
+  } catch (e) {
+    if (!disposed) error.value = String(e);
+  } finally {
+    if (!disposed) uploading.value = false;
+  }
+}
 onMounted(() => load());
 </script>
 
@@ -157,6 +191,14 @@ onMounted(() => load());
     <div class="drive-toolbar">
       <button class="secondary" :disabled="busy" @click="emit('login')">
         <UserRound :size="16" />打开{{ providerName(provider) }}
+      </button>
+      <button
+        v-if="canUpload"
+        class="secondary"
+        :disabled="busy || uploading || !listing"
+        @click="upload"
+      >
+        <Upload :size="16" />{{ uploading ? "正在添加…" : "上传文件" }}
       </button>
       <button
         class="icon-button"

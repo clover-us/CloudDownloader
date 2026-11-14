@@ -448,7 +448,9 @@ onUnmounted(() => {
               tab === "drive"
                 ? driveProvider === "baidu"
                   ? "浏览百度网盘文件，上传、下载和分享。"
-                  : `浏览${providerName(driveProvider)}，选择文件或文件夹下载到本地。`
+                  : driveProvider === "xunlei"
+                    ? "浏览迅雷网盘文件，上传或下载到本地。"
+                    : `浏览${providerName(driveProvider)}，选择文件或文件夹下载到本地。`
                 : tab === "uploads"
                   ? "分片并发传输，随时掌握上传进度。"
                   : tab === "shares"
@@ -523,6 +525,10 @@ onUnmounted(() => {
           @busy="driveBusy = $event"
           @downloaded="
             tab = 'all';
+            refresh();
+          "
+          @uploaded="
+            tab = 'uploads';
             refresh();
           "
         />

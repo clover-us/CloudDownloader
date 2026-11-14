@@ -614,6 +614,7 @@ async fn extra_checks(app: &tauri::AppHandle) -> Result<Value, String> {
         window.clone(),
         app.clone(),
         app.state(),
+        crate::model::Provider::Baidu,
         identity.account_id.clone(),
         record["remoteDir"].as_str().unwrap().into(),
         vec![original.local_path.clone()],
@@ -722,6 +723,7 @@ async fn extra_checks(app: &tauri::AppHandle) -> Result<Value, String> {
         window,
         app.clone(),
         app.state(),
+        crate::model::Provider::Baidu,
         identity.account_id,
         record["remoteDir"].as_str().unwrap().into(),
         vec![
@@ -787,6 +789,7 @@ async fn smoke(app: &tauri::AppHandle, resume: bool) -> Result<Value, String> {
             window.clone(),
             app.clone(),
             app.state(),
+            crate::model::Provider::Baidu,
             identity.account_id,
             remote_dir.clone(),
             vec![path.to_string_lossy().into()],

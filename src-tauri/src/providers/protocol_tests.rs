@@ -273,6 +273,12 @@ fn eight_provider_routes_preserve_lanzou_domains_and_passwords() {
             "",
         ),
         (
+            "https://pan.xunlei.com/s/FixtureXL?pwd=ab12",
+            Provider::Xunlei,
+            "FixtureXL",
+            "ab12",
+        ),
+        (
             "http://someone.lanzoub.com/bFixture?pwd=123",
             Provider::Lanzou,
             "https://someone.lanzoub.com/bFixture",
@@ -297,10 +303,11 @@ fn eight_provider_routes_preserve_lanzou_domains_and_passwords() {
         "https://drive.uc.cn@evil.test/s/file",
         "https://fake.uc.cn/s/file",
         "https://lanzoub.com:444/iFile",
+        "https://pan.xunlei.com.evil.test/s/file",
     ] {
         assert!(parse_share(bad, "").is_err(), "{bad}");
     }
-    assert_eq!(Provider::ALL.len(), 8);
+    assert_eq!(Provider::ALL.len(), 9);
     for provider in Provider::ALL {
         assert_eq!(serde_json::to_value(provider).unwrap(), provider.key());
     }

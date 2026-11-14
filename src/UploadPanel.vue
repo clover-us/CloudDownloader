@@ -11,6 +11,7 @@ import {
   Trash2,
 } from "@lucide/vue";
 import { type UploadTask, formatBytes } from "./cloud";
+import { type Provider, providerName } from "./providers";
 const props = defineProps<{ tasks: UploadTask[] }>();
 const emit = defineEmits<{
   changed: [];
@@ -108,7 +109,7 @@ async function remove() {
           />
         </div>
         <div class="task-meta">
-          <span class="provider-tag">百度网盘</span
+          <span class="provider-tag">{{ providerName(task.provider as Provider) }}</span
           ><span
             >{{ formatBytes(task.completed) }} /
             {{ formatBytes(task.size) }}</span

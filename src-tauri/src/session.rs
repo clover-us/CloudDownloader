@@ -121,6 +121,11 @@ pub async fn connect(
             "https://apis.ilanzou.com/",
             "https://apix.ilanzou.com/",
         ],
+        Provider::Xunlei => &[
+            "https://pan.xunlei.com/",
+            "https://api-pan.xunlei.com/",
+            "https://xluser-ssl.xunlei.com/",
+        ],
     };
     for address in urls {
         let url: url::Url = address.parse().unwrap();
@@ -137,22 +142,41 @@ pub async fn connect(
     if provider == Provider::Pan115 {
         let _ = persist_pan115(app, browser_cookies);
     }
-    let device_id = if provider == Provider::Pan123 {
-        let state = app.state::<crate::AppState>();
-        let store = state.store.lock().unwrap();
-        match store
-            .setting("pan123_device_id")
-            .filter(|value| uuid::Uuid::parse_str(value).is_ok())
-        {
-            Some(value) => value,
-            None => {
-                let value = uuid::Uuid::new_v4().to_string();
-                store.set_setting("pan123_device_id", &value)?;
-                value
+    let device_id = match provider {
+        Provider::Pan123 => {
+            let state = app.state::<crate::AppState>();
+            let store = state.store.lock().unwrap();
+            match store
+                .setting("pan123_device_id")
+                .filter(|value| uuid::Uuid::parse_str(value).is_ok())
+            {
+                Some(value) => value,
+                None => {
+                    let value = uuid::Uuid::new_v4().to_string();
+                    store.set_setting("pan123_device_id", &value)?;
+                    value
+                }
             }
         }
-    } else {
-        String::new()
+        Provider::Xunlei => {
+            // The captcha sign is only accepted for a plain 32-char hex device
+            // id (the browser "deviceid" cookie uses a `wdi10.` prefix that the
+            // shield service rejects), so keep a stable generated hex id.
+            let state = app.state::<crate::AppState>();
+            let store = state.store.lock().unwrap();
+            match store
+                .setting("xunlei_device_id")
+                .filter(|value| value.len() == 32 && value.bytes().all(|b| b.is_ascii_hexdigit()))
+            {
+                Some(value) => value,
+                None => {
+                    let value = uuid::Uuid::new_v4().simple().to_string();
+                    store.set_setting("xunlei_device_id", &value)?;
+                    value
+                }
+            }
+        }
+        _ => String::new(),
     };
     let mut session = crate::providers::Session {
         provider,
@@ -160,12 +184,32 @@ pub async fn connect(
         device_id,
         #[cfg(test)]
         test_endpoint: None,
-        authorization: if matches!(provider, Provider::Pan123 | Provider::C139) {
-            read_authorization(&window, provider)
+        authorization: match provider {
+            Provider::Pan123 | Provider::C139 => read_authorization(&window, provider)
                 .await
-                .unwrap_or_default()
-        } else {
-            String::new()
+                .unwrap_or_default(),
+            // The web app authenticates the drive API with a Bearer access token
+            // kept in localStorage, not with cookies alone. A freshly created
+            // hidden WebView may not have committed pan.xunlei.com yet, so retry
+            // briefly until the credentials key becomes readable.
+            Provider::Xunlei => {
+                let mut token = String::new();
+                for _ in 0..6 {
+                    if let Some(value) = read_xunlei_token(&window).await {
+                        if !value.is_empty() {
+                            token = value;
+                            break;
+                        }
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+                }
+                if token.is_empty() {
+                    String::new()
+                } else {
+                    format!("Bearer {token}")
+                }
+            }
+            _ => String::new(),
         },
     };
     if provider == Provider::Ilanzou {
@@ -242,6 +286,7 @@ async fn read_authorization(window: &WebviewWindow, provider: Provider) -> Optio
     let hosts: &[&str] = match provider {
         Provider::Pan123 => &["123pan.com", "123pan.cn", "123865.com", "123912.com"],
         Provider::C139 => &["139.com", "10086.cn"],
+        Provider::Xunlei => &["xunlei.com"],
         _ => return None,
     };
     if url.scheme() != "https"
@@ -253,11 +298,82 @@ async fn read_authorization(window: &WebviewWindow, provider: Provider) -> Optio
     }
     let keys = match provider {
         Provider::Pan123 => r#"["authorToken","token","access_token"]"#,
+        Provider::Xunlei => r#"["credentials_Xqp0kJBXWhwaTpB6"]"#,
         _ => r#"["authorization","Authorization"]"#,
     };
     let script = format!(
-        r#"(() => {{ for (const store of [localStorage, sessionStorage]) for (const key of {keys}) {{ let value = store.getItem(key); if (!value) continue; try {{ const parsed = JSON.parse(value); value = typeof parsed === 'string' ? parsed : parsed.token || parsed.authorToken || parsed.authorization || ''; }} catch {{}} if (typeof value === 'string' && value.length > 8 && value.length <= 16384 && !/[\x00-\x1f\x7f]/.test(value)) return value; }} return ''; }})()"#
+        r#"(() => {{ for (const store of [localStorage, sessionStorage]) for (const key of {keys}) {{ let value = store.getItem(key); if (!value) continue; try {{ const parsed = JSON.parse(value); value = typeof parsed === 'string' ? parsed : parsed.token || parsed.authorToken || parsed.authorization || parsed.access_token || ''; }} catch {{}} if (typeof value === 'string' && value.length > 8 && value.length <= 16384 && !/[\x00-\x1f\x7f]/.test(value)) return value; }} return ''; }})()"#
     );
+    let (send, receive) = tokio::sync::oneshot::channel();
+    window
+        .with_webview(move |webview| {
+            if let Ok(core) = unsafe { webview.controller().CoreWebView2() } {
+                let handler = webview2_com::ExecuteScriptCompletedHandler::create(Box::new(
+                    move |result, value| {
+                        let _ = send.send(if result.is_ok() {
+                            serde_json::from_str::<String>(&value).ok()
+                        } else {
+                            None
+                        });
+                        Ok(())
+                    },
+                ));
+                let script = webview2_com::CoTaskMemPWSTR::from(script.as_str());
+                let _ = unsafe { core.ExecuteScript(*script.as_ref().as_pcwstr(), &handler) };
+            }
+        })
+        .ok()?;
+    tokio::time::timeout(std::time::Duration::from_secs(4), receive)
+        .await
+        .ok()?
+        .ok()?
+        .filter(|value| !value.is_empty())
+}
+
+#[cfg(windows)]
+async fn read_xunlei_token(window: &WebviewWindow) -> Option<String> {
+    // The pan.xunlei.com web app keeps several `credentials_<client_id>` entries
+    // in localStorage, each holding a Bearer token for a different OAuth client.
+    // The drive API only accepts a token whose `aud` matches the client id we
+    // sign captcha requests with, so pick the entry by decoding the JWT `aud`.
+    let url = window.url().ok()?;
+    if url.scheme() != "https"
+        || !crate::model::host_matches(url.host_str().unwrap_or_default(), "xunlei.com")
+    {
+        return None;
+    }
+    let script = r#"(() => {
+  const want = "__CID__";
+  const stores = [localStorage, sessionStorage];
+  let fallback = "";
+  for (const store of stores) {
+    let length = 0;
+    try { length = store.length; } catch (e) { continue; }
+    for (let i = 0; i < length; i++) {
+      const key = store.key(i);
+      if (!key) continue;
+      let value;
+      try { value = store.getItem(key); } catch (e) { continue; }
+      if (!value || value.indexOf("access_token") === -1) continue;
+      let token = "";
+      try {
+        const parsed = JSON.parse(value);
+        token = parsed.access_token || parsed.token || "";
+      } catch (e) { continue; }
+      if (typeof token !== "string" || token.indexOf("eyJ") !== 0) continue;
+      if (!fallback) fallback = token;
+      try {
+        let part = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+        while (part.length % 4) part += "=";
+        const bytes = Uint8Array.from(atob(part), (c) => c.charCodeAt(0));
+        const payload = JSON.parse(new TextDecoder("utf-8").decode(bytes));
+        if (payload.aud === want) return token;
+      } catch (e) {}
+    }
+  }
+  return fallback;
+})()"#
+        .replace("__CID__", crate::providers::xunlei::CLIENT_ID);
     let (send, receive) = tokio::sync::oneshot::channel();
     window
         .with_webview(move |webview| {
@@ -286,5 +402,10 @@ async fn read_authorization(window: &WebviewWindow, provider: Provider) -> Optio
 
 #[cfg(not(windows))]
 async fn read_authorization(_: &WebviewWindow, _: Provider) -> Option<String> {
+    None
+}
+
+#[cfg(not(windows))]
+async fn read_xunlei_token(_: &WebviewWindow) -> Option<String> {
     None
 }

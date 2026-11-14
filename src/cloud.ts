@@ -28,6 +28,7 @@ export type UploadTask = {
   createdAt: number;
   completedParts: number;
   totalParts: number;
+  provider: string;
 };
 export type CreatedShare = {
   id: string;

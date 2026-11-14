@@ -180,6 +180,7 @@ async function enqueueUploads(paths: string[], directory: string) {
   if (!files.length || files.length > 100)
     throw new Error("一次请选择 1 至 100 个本地文件上传");
   await invoke("upload_enqueue", {
+    provider: "baidu",
     accountId: listing.value.accountId,
     directory,
     paths: files,

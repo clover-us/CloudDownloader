@@ -1,4 +1,8 @@
-use crate::{model::*, providers::Session, session, AppState};
+use crate::{
+    model::*,
+    providers::{xunlei, Session},
+    session, AppState,
+};
 use futures_util::{stream, StreamExt};
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
@@ -43,6 +47,10 @@ pub struct UploadRecord {
     pub remote_file: Option<DriveFile>,
     #[serde(default)]
     pub confirmed_requests: u64,
+    #[serde(default)]
+    pub provider: Provider,
+    #[serde(default)]
+    pub parent_id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -61,6 +69,7 @@ pub struct UploadView {
     pub created_at: u64,
     pub completed_parts: usize,
     pub total_parts: usize,
+    pub provider: Provider,
 }
 impl From<UploadRecord> for UploadView {
     fn from(t: UploadRecord) -> Self {
@@ -78,6 +87,7 @@ impl From<UploadRecord> for UploadView {
             completed: t.completed,
             speed: t.speed,
             created_at: t.created_at,
+            provider: t.provider,
         }
     }
 }
@@ -239,6 +249,9 @@ async fn run_upload(
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
     let _slot = slots.acquire().await.map_err(|_| "上传队列已关闭")?;
+    if t.provider == Provider::Xunlei {
+        return run_upload_xunlei(app, &mut t, stop).await;
+    }
     let session = session::connect(app, Provider::Baidu).await?;
     let identity = session.baidu_identity(Some(&t.account_id)).await?;
     check_local(&t)?;
@@ -323,6 +336,55 @@ async fn run_upload(
     t.completed = t.size;
     t.upload_id.clear();
     save(app, &t)?;
+    Ok(())
+}
+
+async fn run_upload_xunlei(
+    app: &tauri::AppHandle,
+    t: &mut UploadRecord,
+    stop: Arc<AtomicBool>,
+) -> Result<(), String> {
+    let session = session::connect(app, Provider::Xunlei).await?;
+    if session.cloud_identity().await?.0 != t.account_id {
+        return Err("迅雷账号已切换，请使用创建任务时的账号继续上传".into());
+    }
+    check_local(t)?;
+    if session.xunlei_find(&t.remote_path).await?.is_some() {
+        return Err("目标位置已有同名文件，请修改本地文件名或选择其他目录上传".into());
+    }
+    t.status = "hashing".into();
+    save(app, t)?;
+    let path = t.local_path.clone();
+    let size = t.size;
+    let hash_stop = stop.clone();
+    let gcid =
+        tokio::task::spawn_blocking(move || xunlei::gcid(Path::new(&path), size, &hash_stop))
+            .await
+            .map_err(|_| "文件校验任务失败")??;
+    check_local(t)?;
+    t.status = "active".into();
+    t.completed = 0;
+    save(app, t)?;
+    let started = Instant::now();
+    let remote = session
+        .xunlei_upload(
+            Path::new(&t.local_path),
+            &t.parent_id,
+            &t.name,
+            &t.remote_path,
+            t.size,
+            &stop,
+        )
+        .await?;
+    t.speed = (t.size as f64 / started.elapsed().as_secs_f64().max(0.001)) as u64;
+    if remote.md5 != gcid {
+        return Err("云端文件校验值与本地不一致，请重试".into());
+    }
+    t.remote_file = Some(remote);
+    t.status = "complete".into();
+    t.completed = t.size;
+    t.upload_id.clear();
+    save(app, t)?;
     Ok(())
 }
 
@@ -413,6 +475,8 @@ mod tests {
             upload_id: "session-private".into(),
             remote_file: None,
             confirmed_requests: 0,
+            provider: Provider::Baidu,
+            parent_id: String::new(),
         };
         (PathBufGuard(path), record)
     }

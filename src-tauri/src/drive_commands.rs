@@ -1,6 +1,6 @@
 use crate::{
     model::*,
-    providers::baidu_drive::remote_path,
+    providers::{baidu_drive::remote_path, cloud},
     session, start_task, trusted,
     upload::{self, UploadRecord, UploadView},
     AppState,
@@ -232,10 +232,12 @@ pub async fn drive_cancel_share(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn upload_enqueue(
     window: WebviewWindow,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
+    provider: Provider,
     account_id: String,
     directory: String,
     paths: Vec<String>,
@@ -247,14 +249,28 @@ pub async fn upload_enqueue(
     }
     remote_path(&directory)?;
     let _guard = state.resolving.lock().await;
-    let session = session::connect(&app, Provider::Baidu).await?;
-    session.baidu_identity(Some(&account_id)).await?;
-    if directory != "/" {
-        let meta = session.drive_meta(std::slice::from_ref(&directory)).await?;
-        if !meta.iter().any(|f| f.is_dir && f.path == directory) {
-            return Err("上传目标目录不存在".into());
+    let session = session::connect(&app, provider).await?;
+    let parent_id = if provider == Provider::Baidu {
+        session.baidu_identity(Some(&account_id)).await?;
+        if directory != "/" {
+            let meta = session.drive_meta(std::slice::from_ref(&directory)).await?;
+            if !meta.iter().any(|f| f.is_dir && f.path == directory) {
+                return Err("上传目标目录不存在".into());
+            }
         }
-    }
+        String::new()
+    } else {
+        let identity = session.cloud_identity().await?;
+        if identity.0 != account_id {
+            return Err("网盘账号已切换，请重新选择上传目录".into());
+        }
+        let parent = cloud::parent_id(&directory, provider)?;
+        if parent == "0" {
+            String::new()
+        } else {
+            parent
+        }
+    };
     let existing = state.store.lock().unwrap().uploads()?;
     let mut targets = HashSet::new();
     let mut records = Vec::new();
@@ -298,23 +314,36 @@ pub async fn upload_enqueue(
             upload_id: String::new(),
             remote_file: None,
             confirmed_requests: 0,
+            provider,
+            parent_id: parent_id.clone(),
         });
     }
     // Check the chosen names once before enqueueing the batch; the worker checks
     // again before sending data, and create uses the server's no-overwrite mode.
-    for page in 1..=200 {
-        let listing = session.drive_list(&directory, page, "").await?;
-        if let Some(existing_file) = listing.files.iter().find(|f| targets.contains(&f.path)) {
-            return Err(format!(
-                "目标位置已有同名文件：{}。请修改本地文件名或选择其他目录。",
-                existing_file.name
-            ));
+    if provider == Provider::Baidu {
+        for page in 1..=200 {
+            let listing = session.drive_list(&directory, page, "").await?;
+            if let Some(existing_file) = listing.files.iter().find(|f| targets.contains(&f.path)) {
+                return Err(format!(
+                    "目标位置已有同名文件：{}。请修改本地文件名或选择其他目录。",
+                    existing_file.name
+                ));
+            }
+            if !listing.has_more {
+                break;
+            }
+            if page == 200 {
+                return Err("目标目录超过 20000 项，请选择较小的目录上传".into());
+            }
         }
-        if !listing.has_more {
-            break;
-        }
-        if page == 200 {
-            return Err("目标目录超过 20000 项，请选择较小的目录上传".into());
+    } else {
+        for task in &records {
+            if session.xunlei_find(&task.remote_path).await?.is_some() {
+                return Err(format!(
+                    "目标位置已有同名文件：{}。请修改本地文件名或选择其他目录。",
+                    task.name
+                ));
+            }
         }
     }
     for task in &records {

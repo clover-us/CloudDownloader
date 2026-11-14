@@ -10,6 +10,7 @@ mod pan123;
 #[cfg(test)]
 mod protocol_tests;
 mod uc;
+pub mod xunlei;
 
 use crate::{model::*, quark::Quark};
 use reqwest::cookie::CookieStore;
@@ -75,6 +76,7 @@ impl Session {
             Provider::Uc => self.uc_share(share, parent).await,
             Provider::Lanzou => self.lanzou_share(share, parent).await,
             Provider::Ilanzou => self.ilanzou_share(share, parent).await,
+            Provider::Xunlei => self.xunlei_share(share, parent).await,
         }
     }
     pub async fn download(
@@ -102,6 +104,7 @@ impl Session {
             Provider::C139 => self.c139_share_download(share, file).await?,
             Provider::Pan115 => unreachable!(),
             Provider::Ilanzou => self.ilanzou_download(&file.id, Some(share)).await?,
+            Provider::Xunlei => self.xunlei_share_download(share, file).await?,
             Provider::Uc | Provider::Lanzou => unreachable!(),
         };
         self.download_descriptor(url)
@@ -127,6 +130,7 @@ impl Session {
             user_agent: match self.provider {
                 Provider::Quark => crate::quark::DOWNLOAD_AGENT,
                 Provider::Baidu => "pan.baidu.com",
+                Provider::Xunlei => xunlei::DOWNLOAD_UA,
                 _ => crate::quark::USER_AGENT,
             }
             .into(),
@@ -215,6 +219,7 @@ pub fn parse_share(input: &str, code: &str) -> Result<ShareLink, String> {
             "123pan.com" | "www.123pan.com" | "123pan.cn" | "www.123pan.cn" | "123865.com"
             | "www.123865.com" | "123912.com" | "www.123912.com" => Provider::Pan123,
             "yun.139.com" => Provider::C139,
+            "pan.xunlei.com" | "www.pan.xunlei.com" => Provider::Xunlei,
             "drive.uc.cn" | "fast.uc.cn" => Provider::Uc,
             "ilanzou.com" | "www.ilanzou.com" => Provider::Ilanzou,
             host if lanzou_host(host) => Provider::Lanzou,
@@ -367,6 +372,13 @@ pub(super) fn validate_download(provider: Provider, address: &str) -> Result<url
             "cmecloud.cn",
         ],
         Provider::Uc => &["uc.cn", "ucweb.com", "aliyuncs.com"],
+        Provider::Xunlei => &[
+            "xunlei.com",
+            "thunder.com",
+            "xunlei.cn",
+            "thunder.cn",
+            "xlcdn.com",
+        ],
         Provider::Lanzou => &["woozooo.com", "panlanzou.com", "lanzov.com"],
         Provider::Ilanzou => &[
             "ilanzou.com",
