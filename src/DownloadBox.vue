@@ -46,6 +46,8 @@ type Inspection =
   | { kind: "bt"; torrent: { infoHash: string; name: string; files: BtFile[] } }
   | { kind: "btPending"; id: string; message: string };
 type Created = { status: string; error: string };
+/** Mirrors `handoff::Handoff`: a link a browser handed over, plus what it saw. */
+type Handoff = { url: string; filename?: string | null; headers?: string[] };
 const props = defineProps<{
   accounts: { provider: Provider; loggedIn: boolean }[];
   downloadDir: string;
@@ -61,6 +63,12 @@ const text = ref("");
 const code = ref("");
 const localFile = ref<string | null>(null);
 const result = ref<Inspection | null>(null);
+/**
+ * The browser hand-off behind the current link. It carries the cookies, referer
+ * and user agent the browser had for that download, which a direct request from
+ * here would not have; it is dropped as soon as the link is edited by hand.
+ */
+const handoff = ref<Handoff | null>(null);
 const parsing = ref(false);
 const adding = ref(false);
 const error = ref("");
@@ -150,19 +158,22 @@ watch([text, code], () => {
 });
 watch(text, () => {
   localFile.value = null;
+  handoff.value = null;
 });
 onBeforeUnmount(cancel);
 
 /**
- * 浏览器通过 clouddownloader:// 交过来的链接：填进输入框并立即识别。
- * 先等输入框 watcher 跑完，否则它会在识别结果返回后清掉 result。
+ * 浏览器交过来的链接：填进输入框并立即识别。
+ * 先等输入框 watcher 跑完，否则它会在识别结果返回后清掉 result 与 handoff。
  */
-async function receive(value: string) {
-  const link = value.trim();
+async function receive(value: string | Handoff) {
+  const item: Handoff = typeof value === "string" ? { url: value } : value;
+  const link = item.url.trim();
   if (!link) return;
   text.value = link;
   code.value = "";
   await nextTick();
+  handoff.value = item;
   input.value?.focus();
   await inspect();
 }
@@ -194,7 +205,10 @@ async function accept(value: Inspection, request: number) {
   }
   pending = null;
   parsing.value = false;
-  if (value.kind === "direct") filename.value = value.name;
+  if (value.kind === "direct")
+    // The browser knows the name it was going to save as; the probe only sees
+    // what the URL suggests.
+    filename.value = handoff.value?.filename?.trim() || value.name;
   if (value.kind === "bt")
     selected.value = value.torrent.files.map((f) => String(f.index));
   if (value.kind === "share") {
@@ -218,6 +232,7 @@ async function inspect(file: string | null = null) {
         text: text.value,
         code: code.value,
         localFile: file,
+        headers: handoff.value?.headers ?? [],
       }),
       request,
     );
@@ -302,6 +317,7 @@ async function download() {
           url: r.url,
           filename: filename.value.trim(),
           connections: connections.value,
+          headers: handoff.value?.headers ?? [],
         }),
       ];
     else if (r.kind === "bt")
@@ -424,6 +440,9 @@ async function download() {
             </select></label
           >
         </div>
+        <p v-if="handoff?.headers?.length" class="unified-hint">
+          已带上浏览器的登录信息（Cookie、来源页面、浏览器标识），需要登录才能下载的链接也能直接取。
+        </p>
         <p class="unified-hint">
           {{
             result.rangeSupported

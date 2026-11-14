@@ -29,6 +29,63 @@ pub fn validate_url(input: &str) -> Result<url::Url, String> {
     Ok(url)
 }
 
+/// Request headers a browser may hand over with a link. Anything else belongs
+/// to the provider adapters, which build their own headers.
+const HEADER_NAMES: [&str; 3] = ["Cookie", "Referer", "User-Agent"];
+const MAX_HEADER_VALUE: usize = 16384;
+const MAX_HEADERS: usize = 32768;
+
+/// Normalizes the `Name: value` headers a browser sent for one download.
+///
+/// Only the three headers a login-protected file link needs survive: aria2 must
+/// not be pointed at arbitrary headers (nor at a second request hidden behind a
+/// newline), and the values are stored with the task so resume keeps working.
+pub fn validate_headers(input: &[String]) -> Result<Vec<String>, String> {
+    let mut headers = Vec::new();
+    let mut total = 0;
+    for raw in input {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let (name, value) = raw.split_once(':').ok_or("下载请求头无效")?;
+        let name = name.trim();
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        if value.contains(['\r', '\n']) || value.chars().any(char::is_control) {
+            return Err("下载请求头无效".into());
+        }
+        let canonical = HEADER_NAMES
+            .iter()
+            .find(|allowed| allowed.eq_ignore_ascii_case(name))
+            .ok_or_else(|| format!("不支持的下载请求头：{name}"))?;
+        if value.len() > MAX_HEADER_VALUE {
+            return Err("下载请求头过长".into());
+        }
+        total += value.len();
+        if total > MAX_HEADERS {
+            return Err("下载请求头过长".into());
+        }
+        headers.push(format!("{canonical}: {value}"));
+    }
+    Ok(headers)
+}
+
+/// Applies hand-off headers to a request, replacing the defaults they override.
+pub fn attach_headers(
+    mut request: reqwest::RequestBuilder,
+    headers: &[String],
+) -> reqwest::RequestBuilder {
+    for header in headers {
+        if let Some((name, value)) = header.split_once(':') {
+            request = request.header(name.trim(), value.trim());
+        }
+    }
+    request
+}
+
 pub fn validate_connections(connections: u8) -> Result<(), String> {
     if ![1, 4, 8, 16].contains(&connections) {
         return Err("下载连接数请选择 1、4、8 或 16".into());
@@ -70,7 +127,7 @@ fn suggested_name(url: &url::Url, headers: &header::HeaderMap) -> String {
     safe_name(&percent_encoding::percent_decode_str(name).decode_utf8_lossy())
 }
 
-pub async fn probe(input: &str) -> Result<Metadata, String> {
+pub async fn probe(input: &str, handoff: &[String]) -> Result<Metadata, String> {
     let url = validate_url(input)?;
     let client = Client::builder()
         .user_agent(USER_AGENT)
@@ -85,20 +142,22 @@ pub async fn probe(input: &str) -> Result<Metadata, String> {
         }))
         .build()
         .map_err(|_| "无法初始化下载连接")?;
-    // Read response headers only. No cloud cookies, sessions, or referer are attached.
-    let response = client
-        .get(url)
-        .header(header::RANGE, "bytes=0-0")
-        .header(header::ACCEPT_ENCODING, "identity")
-        .send()
-        .await
-        .map_err(|error| {
-            if error.is_timeout() {
-                "连接下载服务器超时，请稍后重试"
-            } else {
-                "无法连接下载服务器，请检查链接、网络或证书"
-            }
-        })?;
+    // Read response headers only. The only credentials attached are the ones the
+    // browser handed over for this exact link; cloud sessions never get here.
+    let request = attach_headers(
+        client
+            .get(url)
+            .header(header::RANGE, "bytes=0-0")
+            .header(header::ACCEPT_ENCODING, "identity"),
+        handoff,
+    );
+    let response = request.send().await.map_err(|error| {
+        if error.is_timeout() {
+            "连接下载服务器超时，请稍后重试"
+        } else {
+            "无法连接下载服务器，请检查链接、网络或证书"
+        }
+    })?;
     let headers = response.headers();
     let content_range = headers
         .get(header::CONTENT_RANGE)
@@ -274,6 +333,7 @@ mod tests {
             range_supported: true,
             etag: Some("\"v1\"".into()),
             last_modified: None,
+            headers: Vec::new(),
         };
         let mut fresh = Metadata {
             content_type: None,
@@ -348,28 +408,116 @@ mod tests {
                 });
             }
         });
-        let ranged = probe(&format!("http://{address}/redirect")).await.unwrap();
+        let ranged = probe(&format!("http://{address}/redirect"), &[])
+            .await
+            .unwrap();
         assert_eq!(ranged.name, "鸣潮.zip");
         assert_eq!(ranged.size, 99);
         assert!(ranged.range_supported);
         assert_eq!(ranged.etag.as_deref(), Some("\"v1\""));
-        let plain = probe(&format!("http://{address}/plain")).await.unwrap();
+        let plain = probe(&format!("http://{address}/plain"), &[])
+            .await
+            .unwrap();
         assert_eq!(plain.size, 4);
         assert!(!plain.range_supported);
         assert_eq!(
-            probe(&format!("http://{address}/empty"))
+            probe(&format!("http://{address}/empty"), &[])
                 .await
                 .unwrap()
                 .size,
             0
         );
-        assert!(
-            probe(&format!("http://{address}/missing?secret=not-for-errors"))
-                .await
-                .err()
-                .unwrap()
-                .contains("HTTP 404")
-        );
+        assert!(probe(
+            &format!("http://{address}/missing?secret=not-for-errors"),
+            &[]
+        )
+        .await
+        .err()
+        .unwrap()
+        .contains("HTTP 404"));
         server.abort();
+    }
+
+    #[test]
+    fn handoff_headers_are_normalized_or_rejected() {
+        assert_eq!(
+            validate_headers(&[
+                "cookie: session=abc; theme=dark".into(),
+                "Referer: https://example.test/list".into(),
+                "user-agent: Browser/1.0".into(),
+            ])
+            .unwrap(),
+            vec![
+                "Cookie: session=abc; theme=dark".to_string(),
+                "Referer: https://example.test/list".to_string(),
+                "User-Agent: Browser/1.0".to_string(),
+            ]
+        );
+        assert!(validate_headers(&["".into(), "Cookie:   ".into()])
+            .unwrap()
+            .is_empty());
+        for bad in [
+            vec!["Authorization: Bearer x".to_string()],
+            vec!["X-Forwarded-For: 1.2.3.4".to_string()],
+            vec!["Cookie: a\r\nX-Evil: 1".to_string()],
+            vec!["Cookie a=b".to_string()],
+            vec![format!("Cookie: {}", "a".repeat(MAX_HEADER_VALUE + 1))],
+        ] {
+            assert!(validate_headers(&bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn probes_and_downloads_with_the_headers_the_browser_handed_over() {
+        use std::sync::{Arc, Mutex};
+        let fixture = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = fixture.local_addr().unwrap();
+        let seen: Arc<Mutex<Vec<String>>> = Default::default();
+        let log = seen.clone();
+        let server = tokio::spawn(async move {
+            let Ok((mut socket, _)) = fixture.accept().await else {
+                return;
+            };
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 4096];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                let Ok(n) = socket.read(&mut buffer).await else {
+                    return;
+                };
+                if n == 0 {
+                    return;
+                }
+                request.extend_from_slice(&buffer[..n]);
+            }
+            log.lock()
+                .unwrap()
+                .push(String::from_utf8_lossy(&request).to_lowercase());
+            let _ = socket
+                .write_all(
+                    b"HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-0/42\r\nContent-Length: 1\r\n\r\na",
+                )
+                .await;
+        });
+        let headers = validate_headers(&[
+            "Cookie: uid=42".into(),
+            "Referer: https://example.test/list".into(),
+            "User-Agent: Browser/1.0".into(),
+        ])
+        .unwrap();
+        let metadata = probe(&format!("http://{address}/secret.zip"), &headers)
+            .await
+            .unwrap();
+        assert_eq!(metadata.size, 42);
+        server.await.unwrap();
+        let seen = seen.lock().unwrap();
+        let request = seen.last().unwrap();
+        assert!(request.contains("cookie: uid=42"), "{request}");
+        assert!(
+            request.contains("referer: https://example.test/list"),
+            "{request}"
+        );
+        // The browser user agent replaces the default one, not both.
+        assert!(request.contains("user-agent: browser/1.0"), "{request}");
+        assert!(!request.contains("clouddownloader/"), "{request}");
     }
 }

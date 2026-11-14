@@ -10,9 +10,13 @@ pub async fn enqueue_direct(
     url: String,
     filename: String,
     connections: u8,
+    headers: Option<Vec<String>>,
 ) -> Result<Task, String> {
     trusted(&window)?;
     direct::validate_connections(connections)?;
+    // Only the headers a browser hand-off needs survive; a link pasted by hand
+    // carries none and keeps working exactly as before.
+    let headers = direct::validate_headers(&headers.unwrap_or_default())?;
     let url = direct::validate_url(&url)?.to_string();
     let _guard = state.resolving.lock().await;
     let directory = state
@@ -29,7 +33,7 @@ pub async fn enqueue_direct(
     }) {
         return Err("该链接已在下载列表中，可继续现有任务".into());
     }
-    let metadata = direct::probe(&url).await?;
+    let metadata = direct::probe(&url, &headers).await?;
     let name = direct::available_name(
         &PathBuf::from(&directory),
         if filename.trim().is_empty() {
@@ -71,6 +75,7 @@ pub async fn enqueue_direct(
             range_supported: metadata.range_supported,
             etag: metadata.etag.clone(),
             last_modified: metadata.last_modified.clone(),
+            headers,
         }),
         connections: 0,
         bt: None,

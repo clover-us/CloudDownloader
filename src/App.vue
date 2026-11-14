@@ -63,6 +63,8 @@ type Account = {
 };
 type Share = { provider: Provider; id: string; passcode: string };
 type TaskBatch = { id: string; name: string; path?: string };
+/** Mirrors `handoff::Handoff`: the link plus what the browser knew about it. */
+type Handoff = { url: string; filename?: string | null; headers?: string[] };
 type Task = {
   bt?: { selected: number[]; maxPeers: number } | null;
   uploadSpeed?: number;
@@ -711,7 +713,7 @@ async function folder(id?: string) {
  * 负责取走队列：挂载时和每次事件各取一次，避免冷启动/重载时漏掉或重复处理。
  */
 async function receiveHandoff() {
-  const links = (await invoke<string[] | null>("take_handoff")) ?? [];
+  const links = (await invoke<Handoff[] | null>("take_handoff")) ?? [];
   if (!links.length) return;
   tab.value = "all";
   await nextTick();

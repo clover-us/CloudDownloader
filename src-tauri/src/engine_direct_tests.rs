@@ -142,6 +142,7 @@ async fn direct_parallel_ranges_and_non_range_restart_preserve_bytes() {
         range_supported: true,
         etag: Some("\"direct-v1\"".into()),
         last_modified: None,
+        headers: Vec::new(),
     };
     let engine = Engine::start().unwrap();
     ready(&engine.rpc).await;

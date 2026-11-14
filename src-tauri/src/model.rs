@@ -249,6 +249,11 @@ pub struct DirectSource {
     pub range_supported: bool,
     pub etag: Option<String>,
     pub last_modified: Option<String>,
+    /// Cookie/Referer/User-Agent the browser handed over with this link. Kept
+    /// with the task so a resume still passes the same login gate; empty for
+    /// links pasted by hand.
+    #[serde(default)]
+    pub headers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

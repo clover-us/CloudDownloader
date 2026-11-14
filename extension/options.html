@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>CloudDownloader 接力设置</title>
+    <style>
+      body {
+        font: 14px/1.6 system-ui, "Microsoft YaHei", sans-serif;
+        margin: 0 auto;
+        max-width: 560px;
+        padding: 28px 20px 40px;
+        color: #1f2430;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 18px;
+      }
+      label {
+        display: block;
+        margin: 0 0 16px;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      input[type="number"] {
+        width: 96px;
+      }
+      textarea {
+        width: 100%;
+        min-height: 86px;
+        box-sizing: border-box;
+        font: inherit;
+      }
+      small {
+        color: #5b6270;
+      }
+      button {
+        font: inherit;
+        padding: 7px 14px;
+        border: 1px solid #c8ccd4;
+        border-radius: 8px;
+        background: #fff;
+        cursor: pointer;
+      }
+      #status {
+        margin-left: 8px;
+      }
+      .ok {
+        color: #1c7c48;
+      }
+      .bad {
+        color: #b02a2a;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>CloudDownloader 接力</h1>
+    <label class="row">
+      <input type="checkbox" id="enabled" />
+      自动把浏览器下载交给 CloudDownloader
+    </label>
+    <label>
+      本机端口（与应用的「浏览器扩展」设置一致）<br />
+      <input type="number" id="port" min="1" max="65535" />
+    </label>
+    <label>
+      小于这个体积的文件留给浏览器（0 表示全部接管，单位 MB）<br />
+      <input type="number" id="minSizeMb" min="0" step="1" />
+    </label>
+    <label>
+      只接管这些站点（每行一个域名，留空表示所有站点）<br />
+      <textarea id="sites" placeholder="example.com&#10;pan.example.net"></textarea>
+      <small>子域名自动包含。比如只接管网盘站点，普通网页下载仍交给浏览器。</small>
+    </label>
+    <div class="row">
+      <button id="save">保存</button>
+      <button id="test">测试连接</button>
+      <span id="status"></span>
+    </div>
+    <script src="options.js"></script>
+  </body>
+</html>

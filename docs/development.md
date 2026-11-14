@@ -64,6 +64,8 @@ powershell -ExecutionPolicy Bypass -File scripts/updater-key.ps1
 - `src/DownloadBox.vue`：统一下载输入、文件预览与 BT 参数界面。
 - `src-tauri/src/bt.rs`、`download_commands.rs`：链接分类、种子校验、磁力元数据和 BT 任务。
 - `src-tauri/src/handoff.rs`：浏览器 `clouddownloader://` 协议的解析、链接队列与窗口唤醒。
+- `src-tauri/src/bridge.rs`：浏览器扩展用的本机 HTTP 接口（仅扩展来源，接收链接与请求头）。
+- `extension/`：Chrome/Edge 扩展，接管浏览器下载并把 Cookie、来源页面、浏览器标识交给桌面端。
 - `src-tauri/src/engine_bt_tests.rs`：真实本地 Tracker／aria2 节点、选择下载及重启续传测试。
 - `src-tauri/src/direct.rs`、`direct_commands.rs`：普通链接检测、文件名与续传保护、创建下载任务。
 - `src-tauri/src/tray.rs`：托盘图标、恢复窗口和退出菜单。

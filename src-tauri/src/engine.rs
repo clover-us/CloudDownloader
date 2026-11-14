@@ -328,7 +328,7 @@ impl Rpc {
         } else {
             1
         };
-        let mut headers = Vec::new();
+        let mut headers = crate::direct::validate_headers(&source.headers)?;
         if let Some(etag) = &source.etag {
             headers.push(format!("If-Match: {etag}"));
         } else if let Some(modified) = &source.last_modified {

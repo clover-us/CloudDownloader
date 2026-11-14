@@ -107,7 +107,7 @@ pub fn cloud_route(input: &str) -> bool {
                 || providers::parse_share(input, "").is_ok()))
 }
 
-async fn fetch_torrent(input: &str) -> Result<Vec<u8>, String> {
+async fn fetch_torrent(input: &str, handoff: &[String]) -> Result<Vec<u8>, String> {
     let url = direct::validate_url(input)?;
     let client = reqwest::Client::builder()
         .user_agent(direct::USER_AGENT)
@@ -122,8 +122,7 @@ async fn fetch_torrent(input: &str) -> Result<Vec<u8>, String> {
         }))
         .build()
         .map_err(|_| "无法初始化种子下载")?;
-    let mut response = client
-        .get(url)
+    let mut response = direct::attach_headers(client.get(url), handoff)
         .send()
         .await
         .map_err(|_| "获取种子文件失败，请检查网络和链接")?;
@@ -151,8 +150,12 @@ pub async fn inspect_download(
     text: String,
     code: String,
     local_file: Option<String>,
+    headers: Option<Vec<String>>,
 ) -> Result<Inspection, String> {
     trusted(&window)?;
+    // A browser hand-off carries the session that link needs; anything else is
+    // dropped here so a pasted link keeps the old behaviour.
+    let headers = direct::validate_headers(&headers.unwrap_or_default())?;
     let base = app.path().app_data_dir().map_err(|_| "无法定位种子缓存")?;
     if let Some(local) = local_file {
         let path = Path::new(&local);
@@ -214,17 +217,17 @@ pub async fn inspect_download(
         return Ok(Inspection::Share { listing });
     }
     let url = direct::validate_url(&link)?.to_string();
-    inspect_http(&base, &url).await
+    inspect_http(&base, &url, &headers).await
 }
 
-async fn inspect_http(base: &Path, url: &str) -> Result<Inspection, String> {
+async fn inspect_http(base: &Path, url: &str, headers: &[String]) -> Result<Inspection, String> {
     if url::Url::parse(url).is_ok_and(|v| v.path().to_ascii_lowercase().ends_with(".torrent")) {
-        let bytes = fetch_torrent(url).await?;
+        let bytes = fetch_torrent(url, headers).await?;
         return Ok(Inspection::Bt {
             torrent: bt::cache(base, &bytes)?,
         });
     }
-    let metadata = direct::probe(url).await?;
+    let metadata = direct::probe(url, headers).await?;
     if metadata.name.to_ascii_lowercase().ends_with(".torrent")
         || metadata.content_type.as_deref().is_some_and(|v| {
             v.split(';')
@@ -234,7 +237,7 @@ async fn inspect_http(base: &Path, url: &str) -> Result<Inspection, String> {
                 .eq_ignore_ascii_case("application/x-bittorrent")
         })
     {
-        let bytes = fetch_torrent(url).await?;
+        let bytes = fetch_torrent(url, headers).await?;
         return Ok(Inspection::Bt {
             torrent: bt::cache(base, &bytes)?,
         });
@@ -537,14 +540,14 @@ mod tests {
         ));
         for route in ["seed.torrent", "download?id=1"] {
             assert!(matches!(
-                inspect_http(&base, &format!("http://{address}/{route}"))
+                inspect_http(&base, &format!("http://{address}/{route}"), &[])
                     .await
                     .unwrap(),
                 Inspection::Bt { .. }
             ));
         }
         assert!(matches!(
-            inspect_http(&base, &format!("http://{address}/file.zip"))
+            inspect_http(&base, &format!("http://{address}/file.zip"), &[])
                 .await
                 .unwrap(),
             Inspection::Direct {
@@ -554,7 +557,7 @@ mod tests {
             }
         ));
         assert!(
-            inspect_http(&base, &format!("http://{address}/huge.torrent"))
+            inspect_http(&base, &format!("http://{address}/huge.torrent"), &[])
                 .await
                 .unwrap_err()
                 .contains("4 MiB")

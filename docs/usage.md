@@ -96,7 +96,18 @@ start "clouddownloader://add?url=https%3A%2F%2Fexample.com%2Ffile.zip"
 
 - 支持 HTTP/HTTPS 直链和 `magnet:` 磁力链接；其他协议、本地文件路径和多条链接会被忽略。
 - 协议在应用每次启动时写入当前用户注册表（`HKCU\Software\Classes\clouddownloader`），卸载时删除。便携版换了目录后启动一次即可重新指向新的可执行文件。
-- Chrome/Edge 首次点击会询问是否打开 CloudDownloader，勾选「始终允许」后不再提示。网页里点下载按钮直接开始的普通文件下载不会被接管，那需要浏览器扩展，当前版本尚未内置。
+- Chrome/Edge 首次点击会询问是否打开 CloudDownloader，勾选「始终允许」后不再提示。
+- 网页里点下载按钮直接开始的普通文件（`Content-Disposition: attachment`）不会被协议接管：浏览器不允许外部程序拦截自己的下载。这类下载需要安装 `extension/` 里的浏览器扩展。
+
+### 用扩展接管普通下载
+
+1. 在 `chrome://extensions`（Edge 为 `edge://extensions`）打开开发者模式，「加载已解压的扩展程序」选择仓库的 `extension/` 目录。
+2. 打开扩展选项，点「测试连接」，显示「已连接」表示桌面端在运行、端口一致。
+3. 之后在网页里点下载，浏览器会先把地址和它携带的 Cookie、来源页面、浏览器标识交给桌面端，桌面端收下后浏览器取消自己那份，改由 CloudDownloader 下载。
+4. 扩展默认接管所有站点；可在选项里填站点白名单或体积下限，只接管网盘等特定站点。桌面端没开时浏览器会照常下载，不会丢失。
+5. 链接右键菜单有「用 CloudDownloader 下载」，用于手动发送。
+
+扩展只连本机 `127.0.0.1:17890`，桌面端只接受来源为浏览器扩展的请求；Cookie 只用于这一次下载请求，不写日志也不保存。`blob:`、`data:` 这类浏览器内部地址和受 DRM 保护的视频没有可供外部下载的直链，不会被接管。扩展未上架商店，需以开发者模式安装。详见 [`extension/README.md`](../extension/README.md)。
 
 ## 账号与下载
 

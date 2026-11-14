@@ -1,3 +1,4 @@
+mod bridge;
 mod bt;
 mod cloud_commands;
 mod direct;
@@ -237,7 +238,10 @@ async fn settings_set(
 /// 取走浏览器通过 `clouddownloader://` 交过来的链接；前端挂载和收到 `handoff`
 /// 事件后各调用一次，队列只清空一次，冷启动和重载都不会丢。
 #[tauri::command]
-fn take_handoff(window: WebviewWindow, app: tauri::AppHandle) -> Result<Vec<String>, String> {
+fn take_handoff(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+) -> Result<Vec<handoff::Handoff>, String> {
     trusted(&window)?;
     Ok(app
         .try_state::<handoff::Inbox>()
@@ -280,7 +284,7 @@ async fn start_task(
         if let Some(source) = &mut task.direct {
             let metadata = match prepared_direct {
                 Some(metadata) => metadata,
-                None => direct::probe(&source.url).await?,
+                None => direct::probe(&source.url, &source.headers).await?,
             };
             let partial = task.completed > 0
                 || PathBuf::from(&task.directory)
@@ -1101,6 +1105,10 @@ pub fn run() {
             // which portable builds and in-place updates would otherwise break. A
             // failure only costs the browser hand-off, so startup continues.
             let _ = app.deep_link().register_all();
+            // The extension posts whole browser downloads here. Only a failed
+            // bind (another copy already listening) is ignored: the protocol
+            // hand-off keeps working without it.
+            bridge::start(app.handle().clone());
             // Cold start: this process was launched by the protocol itself, so the
             // link is queued for the front end instead of showing an empty window.
             for argument in std::env::args().skip(1) {

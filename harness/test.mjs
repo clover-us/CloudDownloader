@@ -835,6 +835,59 @@ check(
   (await page.evaluate(() => window.__MOCK__.state.handoffs.length)) === 0,
 );
 
+// --- M4–M6. Extension hand-off (bridge): browser headers reach the engine ---
+const handed = {
+  url: "https://example.com/files/signed-video.mp4",
+  filename: "video.mp4",
+  headers: [
+    "Referer: https://example.com/watch",
+    "Cookie: uid=42",
+    "User-Agent: Browser/1.0",
+  ],
+};
+await mock("handoff", handed);
+await page.waitForFunction(
+  () =>
+    document.querySelector(".unified-download textarea")?.value ===
+    "https://example.com/files/signed-video.mp4",
+);
+check(
+  "M4 handoff keeps the browser filename",
+  (await page.locator(".unified-filename input").inputValue()) === "video.mp4",
+);
+await page.waitForFunction(() =>
+  document
+    .querySelector(".unified-download")
+    ?.textContent?.includes("已带上浏览器的登录信息"),
+);
+check(
+  "M5 handoff says it carries the browser login",
+  true,
+);
+const inspectArgs = await page.evaluate(() =>
+  window.__MOCK__.state.calls.filter((c) => c.cmd === "inspect_download").at(-1)
+    ?.args,
+);
+check(
+  "M6 handoff hands the headers to the probe",
+  JSON.stringify(inspectArgs?.headers) === JSON.stringify(handed.headers),
+  JSON.stringify(inspectArgs),
+);
+await page.locator(".unified-download .selection-footer button.primary").click();
+await page.waitForFunction(() =>
+  window.__MOCK__.state.calls.some((c) => c.cmd === "enqueue_direct"),
+);
+const enqueueArgs = await page.evaluate(() =>
+  window.__MOCK__.state.calls.filter((c) => c.cmd === "enqueue_direct").at(-1)
+    ?.args,
+);
+check(
+  "M7 handoff passes the headers on to aria2",
+  enqueueArgs?.url === handed.url &&
+    JSON.stringify(enqueueArgs?.headers) === JSON.stringify(handed.headers),
+  JSON.stringify(enqueueArgs),
+);
+
 check(
   "Z1 no page errors",
   pageErrors.length === 0,

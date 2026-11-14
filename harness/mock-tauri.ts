@@ -105,7 +105,7 @@ const state = {
   } as Record<string, string>,
   calls: [] as { cmd: string; args: unknown }[],
   uploads: [] as Record<string, unknown>[],
-  handoffs: [] as string[],
+  handoffs: [] as { url: string; filename?: string | null; headers?: string[] }[],
   refreshDelayMs: Number((window as any).__MOCK_SLOW__ || 0),
 };
 
@@ -439,7 +439,10 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
   }
   if (cmd === "inspect_download") {
     const link = String(args.text ?? "").trim();
-    const name = link.split("/").pop()?.split("?")[0] || "file.bin";
+    const name =
+      String(args.filename ?? "").trim() ||
+      link.split("/").pop()?.split("?")[0] ||
+      "file.bin";
     return {
       kind: "direct",
       url: link,
@@ -504,9 +507,10 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
     emit("tasks-changed");
   },
   // Mirrors the backend: the link is queued before the event is emitted, so a
-  // late listener still sees it through take_handoff.
-  handoff(link: string) {
-    state.handoffs.push(link);
+  // late listener still sees it through take_handoff. A plain string is the
+  // clouddownloader:// form; an object is what the extension bridge delivers.
+  handoff(link: string | { url: string; filename?: string | null; headers?: string[] }) {
+    state.handoffs.push(typeof link === "string" ? { url: link } : link);
     emit("handoff", null);
   },
   lastCall(cmd: string) {
