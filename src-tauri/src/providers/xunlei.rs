@@ -523,6 +523,7 @@ impl Session {
         Err("该迅雷分享文件需要先转存到自己的网盘才能下载，请稍后在迅雷客户端转存".into())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn xunlei_upload(
         &self,
         local_path: &Path,
@@ -531,6 +532,7 @@ impl Session {
         remote_path: &str,
         size: u64,
         stop: &AtomicBool,
+        progress: &std::sync::Arc<std::sync::atomic::AtomicU64>,
     ) -> Result<DriveFile, String> {
         if stop.load(Ordering::Relaxed) {
             return Err("已暂停".into());
@@ -551,7 +553,7 @@ impl Session {
             .and_then(|resumable| resumable.get("params"))
             .cloned()
             .ok_or("迅雷未返回上传会话信息")?;
-        self.put_object(&params, local_path, size).await?;
+        self.put_object(&params, local_path, size, progress).await?;
         let file = value.get("file").cloned().unwrap_or_else(|| json!({}));
         let id = text(&file["id"]);
         if id.is_empty() {
@@ -688,7 +690,13 @@ impl Session {
         })
     }
 
-    async fn put_object(&self, params: &Value, path: &Path, size: u64) -> Result<(), String> {
+    async fn put_object(
+        &self,
+        params: &Value,
+        path: &Path,
+        size: u64,
+        progress: &std::sync::Arc<std::sync::atomic::AtomicU64>,
+    ) -> Result<(), String> {
         let bucket = text(&params["bucket"]);
         let key = text(&params["key"]);
         let endpoint = text(&params["endpoint"]);
@@ -723,10 +731,33 @@ impl Session {
             .encode(hmac_sha1(secret.as_bytes(), string_to_sign.as_bytes()));
         let authorization = format!("OSS {access}:{signature}");
 
-        let body = std::fs::read(path).map_err(|_| "读取上传文件失败")?;
-        if body.len() as u64 != size {
+        let meta = tokio::fs::metadata(path)
+            .await
+            .map_err(|_| "读取上传文件失败")?;
+        if meta.len() != size {
             return Err("本地文件已修改，请移除该任务并重新选择文件".into());
         }
+        let counter = progress.clone();
+        let file = tokio::fs::File::open(path)
+            .await
+            .map_err(|_| "读取上传文件失败")?;
+        let body_stream = futures_util::stream::unfold(file, move |mut file| {
+            let counter = counter.clone();
+            async move {
+                use tokio::io::AsyncReadExt;
+                let mut buf = vec![0u8; 256 * 1024];
+                match file.read(&mut buf).await {
+                    Ok(0) => None,
+                    Ok(n) => {
+                        buf.truncate(n);
+                        counter.fetch_add(n as u64, Ordering::Relaxed);
+                        Some((Ok::<Vec<u8>, std::io::Error>(buf), file))
+                    }
+                    Err(e) => Some((Err(e), file)),
+                }
+            }
+        });
+        let body = reqwest::Body::wrap_stream(body_stream);
         let mut request = self
             .transport
             .client

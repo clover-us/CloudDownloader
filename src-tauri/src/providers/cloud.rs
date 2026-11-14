@@ -748,6 +748,7 @@ impl Session {
     /// API to complete the multipart upload and finalise the file entry. The
     /// whole file is sent as a single part (partNumber=1), which avoids the
     /// fragile SHA1-midstate `x-oss-hash-ctx` that multi-part uploads require.
+    #[allow(clippy::too_many_arguments)]
     pub async fn cloud_upload(
         &self,
         local_path: &std::path::Path,
@@ -756,22 +757,49 @@ impl Session {
         remote_path: &str,
         size: u64,
         stop: &std::sync::atomic::AtomicBool,
+        progress: &std::sync::Arc<std::sync::atomic::AtomicU64>,
     ) -> Result<DriveFile, String> {
         use std::sync::atomic::Ordering;
         if !matches!(self.provider, Provider::Quark) {
             return Err("该网盘暂不支持上传".into());
         }
-        let bytes = tokio::fs::read(local_path)
+        let meta = tokio::fs::metadata(local_path)
             .await
             .map_err(|_| "读取上传文件失败")?;
-        if bytes.len() as u64 != size {
+        if meta.len() != size {
             return Err("本地文件已修改，请移除该任务并重新选择文件".into());
         }
         if stop.load(Ordering::Relaxed) {
             return Err("__paused".into());
         }
-        let md5 = format!("{:x}", Md5::digest(&bytes));
-        let sha1 = format!("{:x}", Sha1::digest(&bytes));
+        // 计算整文件 md5/sha1（阻塞读取，避免整文件常驻内存）
+        let (md5, sha1) = {
+            let path = local_path.to_path_buf();
+            tokio::task::spawn_blocking(move || -> Result<(String, String), String> {
+                use std::io::Read;
+                let mut file =
+                    std::fs::File::open(&path).map_err(|_| "读取上传文件失败".to_string())?;
+                let mut md5 = Md5::new();
+                let mut sha1 = Sha1::new();
+                let mut buffer = vec![0u8; 1024 * 1024];
+                loop {
+                    let n = file
+                        .read(&mut buffer)
+                        .map_err(|_| "读取上传文件失败".to_string())?;
+                    if n == 0 {
+                        break;
+                    }
+                    md5.update(&buffer[..n]);
+                    sha1.update(&buffer[..n]);
+                }
+                Ok((
+                    format!("{:x}", md5.finalize()),
+                    format!("{:x}", sha1.finalize()),
+                ))
+            })
+            .await
+            .map_err(|_| "文件校验任务失败")??
+        };
         let parent = if parent_id.is_empty() { "0" } else { parent_id };
         let now_ms = now().saturating_mul(1000);
         let query = [("pr", "ucpro".to_string()), ("fr", "pc".to_string())];
@@ -850,6 +878,27 @@ impl Session {
         if auth_key.is_empty() {
             return Err("夸克上传鉴权失败，请稍后重试".into());
         }
+        let counter = progress.clone();
+        let file = tokio::fs::File::open(local_path)
+            .await
+            .map_err(|_| "读取上传文件失败")?;
+        let body_stream = futures_util::stream::unfold(file, move |mut file| {
+            let counter = counter.clone();
+            async move {
+                use tokio::io::AsyncReadExt;
+                let mut buf = vec![0u8; 256 * 1024];
+                match file.read(&mut buf).await {
+                    Ok(0) => None,
+                    Ok(n) => {
+                        buf.truncate(n);
+                        counter.fetch_add(n as u64, Ordering::Relaxed);
+                        Some((Ok::<Vec<u8>, std::io::Error>(buf), file))
+                    }
+                    Err(e) => Some((Err(e), file)),
+                }
+            }
+        });
+        let body = reqwest::Body::wrap_stream(body_stream);
         let response = self
             .transport
             .client
@@ -860,7 +909,7 @@ impl Session {
             .header("x-oss-date", &oss_date)
             .header("x-oss-user-agent", ua)
             .header("Authorization", &auth_key)
-            .body(bytes)
+            .body(body)
             // 上传大文件可能远超客户端默认的 30 秒总超时，这里按请求放宽。
             .timeout(std::time::Duration::from_secs(3600))
             .send()

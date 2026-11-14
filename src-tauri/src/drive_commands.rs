@@ -98,6 +98,16 @@ fn child_path(parent: &str, name: &str) -> Result<String, String> {
     Ok(path)
 }
 
+/// 拆分为 (主名, 扩展名)，用于同名文件自动追加序号。
+fn split_name(name: &str) -> (String, String) {
+    match name.rfind('.') {
+        Some(idx) if idx > 0 && idx < name.len() - 1 => {
+            (name[..idx].to_string(), name[idx..].to_string())
+        }
+        _ => (name.to_string(), String::new()),
+    }
+}
+
 fn validate_entry_name(name: &str) -> Result<(), String> {
     if name.trim().is_empty()
         || name != name.trim()
@@ -427,7 +437,6 @@ pub async fn upload_enqueue(
         return Err("该网盘暂不支持上传".into());
     };
     let existing = state.store.lock().unwrap().uploads()?;
-    let mut targets = HashSet::new();
     let mut records = Vec::new();
     for path in paths {
         let path = PathBuf::from(path);
@@ -441,13 +450,11 @@ pub async fn upload_enqueue(
             .ok_or("本地文件名无效")?
             .to_string();
         let remote_path = child_path(&directory, &name)?;
-        if !targets.insert(remote_path.clone())
-            || existing.iter().any(|t| {
-                t.account_id == account_id
-                    && t.remote_path == remote_path
-                    && !matches!(t.status.as_str(), "complete" | "error")
-            })
-        {
+        if existing.iter().any(|t| {
+            t.account_id == account_id
+                && t.remote_path == remote_path
+                && !matches!(t.status.as_str(), "complete" | "error")
+        }) {
             return Err(format!("{name} 已在上传队列中"));
         }
         records.push(UploadRecord {
@@ -473,54 +480,63 @@ pub async fn upload_enqueue(
             parent_id: parent_id.clone(),
         });
     }
-    // Check the chosen names once before enqueueing the batch; the worker checks
-    // again before sending data, and create uses the server's no-overwrite mode.
-    if provider == Provider::Baidu {
-        for page in 1..=200 {
-            let listing = session.drive_list(&directory, page, "").await?;
-            if let Some(existing_file) = listing.files.iter().find(|f| targets.contains(&f.path)) {
-                return Err(format!(
-                    "目标位置已有同名文件：{}。请修改本地文件名或选择其他目录。",
-                    existing_file.name
-                ));
-            }
-            if !listing.has_more {
-                break;
-            }
-            if page == 200 {
-                return Err("目标目录超过 20000 项，请选择较小的目录上传".into());
-            }
-        }
-    } else if provider == Provider::Xunlei {
-        for task in &records {
-            if session.xunlei_find(&task.remote_path).await?.is_some() {
-                return Err(format!(
-                    "目标位置已有同名文件：{}。请修改本地文件名或选择其他目录。",
-                    task.name
-                ));
+    // 目标目录已有的文件名集合，用于同名自动追加序号。
+    let mut taken: HashSet<String> = HashSet::new();
+    match provider {
+        Provider::Baidu => {
+            for page in 1..=200 {
+                let listing = session.drive_list(&directory, page, "").await?;
+                for file in &listing.files {
+                    taken.insert(file.name.clone());
+                }
+                if !listing.has_more {
+                    break;
+                }
+                if page == 200 {
+                    return Err("目标目录超过 20000 项，请选择较小的目录上传".into());
+                }
             }
         }
-    } else if provider == Provider::Quark {
-        let names: Vec<String> = records.iter().map(|t| t.name.clone()).collect();
-        for page in 1..=200 {
-            let batch = session.cloud_page(&directory, page, None).await?;
-            if let Some(found) = batch
-                .entries
-                .iter()
-                .find(|entry| names.iter().any(|name| name == &entry.file.name))
-            {
-                return Err(format!(
-                    "目标位置已有同名文件：{}。请修改本地文件名或选择其他目录。",
-                    found.file.name
-                ));
-            }
-            if batch.next.is_none() {
-                break;
-            }
-            if page == 200 {
-                return Err("目标目录超过 20000 项，请选择较小的目录上传".into());
+        Provider::Quark | Provider::Xunlei => {
+            let mut cursor: Option<String> = None;
+            for page in 1..=200u32 {
+                let batch = session
+                    .cloud_page(&directory, page, cursor.as_deref())
+                    .await?;
+                for entry in &batch.entries {
+                    taken.insert(entry.file.name.clone());
+                }
+                cursor = batch.next;
+                if cursor.is_none() {
+                    break;
+                }
+                if page == 200 {
+                    return Err("目标目录超过 20000 项，请选择较小的目录上传".into());
+                }
             }
         }
+        _ => {}
+    }
+    // 同名自动重命名：a.txt -> a (1).txt -> a (2).txt ...
+    for record in records.iter_mut() {
+        let original = record.name.clone();
+        if taken.contains(&original) {
+            let (stem, ext) = split_name(&original);
+            let mut n = 1u32;
+            let candidate = loop {
+                let candidate = format!("{stem} ({n}){ext}");
+                if !taken.contains(&candidate) {
+                    break candidate;
+                }
+                n += 1;
+                if n > 10_000 {
+                    return Err(format!("{original} 同名文件过多，请修改文件名"));
+                }
+            };
+            record.name = candidate.clone();
+            record.remote_path = child_path(&directory, &candidate)?;
+        }
+        taken.insert(record.name.clone());
     }
     for task in &records {
         state.store.lock().unwrap().save_upload(task)?;

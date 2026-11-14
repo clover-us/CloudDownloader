@@ -11,7 +11,7 @@ use std::{
     io::{Read, Seek, SeekFrom},
     path::Path,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
     time::{Duration, Instant},
@@ -368,24 +368,46 @@ async fn run_upload_xunlei(
     t.status = "active".into();
     t.completed = 0;
     save(app, t)?;
+    let local = t.local_path.clone();
+    let parent_id = t.parent_id.clone();
+    let name = t.name.clone();
+    let remote_path = t.remote_path.clone();
+    let total = t.size;
+    let progress = Arc::new(AtomicU64::new(0));
     let started = Instant::now();
-    let remote = session
-        .xunlei_upload(
-            Path::new(&t.local_path),
-            &t.parent_id,
-            &t.name,
-            &t.remote_path,
-            t.size,
-            &stop,
-        )
-        .await?;
-    t.speed = (t.size as f64 / started.elapsed().as_secs_f64().max(0.001)) as u64;
+    let upload = session.xunlei_upload(
+        Path::new(&local),
+        &parent_id,
+        &name,
+        &remote_path,
+        total,
+        &stop,
+        &progress,
+    );
+    tokio::pin!(upload);
+    let mut ticker = tokio::time::interval(Duration::from_millis(300));
+    let mut last = 0u64;
+    let remote = loop {
+        tokio::select! {
+            result = &mut upload => break result?,
+            _ = ticker.tick() => {
+                let done = progress.load(Ordering::Relaxed).min(total);
+                if done > t.completed {
+                    t.completed = done;
+                    t.speed = ((done - last) as f64 / 0.3) as u64;
+                    last = done;
+                    save(app, t)?;
+                }
+            }
+        }
+    };
+    t.speed = (total as f64 / started.elapsed().as_secs_f64().max(0.001)) as u64;
     if remote.md5 != gcid {
         return Err("云端文件校验值与本地不一致，请重试".into());
     }
     t.remote_file = Some(remote);
     t.status = "complete".into();
-    t.completed = t.size;
+    t.completed = total;
     t.upload_id.clear();
     save(app, t)?;
     Ok(())
@@ -404,24 +426,46 @@ async fn run_upload_quark(
     t.status = "uploading".into();
     t.completed = 0;
     save(app, t)?;
+    let local = t.local_path.clone();
+    let parent_id = t.parent_id.clone();
+    let name = t.name.clone();
+    let remote_path = t.remote_path.clone();
+    let total = t.size;
+    let progress = Arc::new(AtomicU64::new(0));
     let started = Instant::now();
-    let remote = session
-        .cloud_upload(
-            Path::new(&t.local_path),
-            &t.parent_id,
-            &t.name,
-            &t.remote_path,
-            t.size,
-            &stop,
-        )
-        .await?;
-    if remote.size != t.size {
+    let upload = session.cloud_upload(
+        Path::new(&local),
+        &parent_id,
+        &name,
+        &remote_path,
+        total,
+        &stop,
+        &progress,
+    );
+    tokio::pin!(upload);
+    let mut ticker = tokio::time::interval(Duration::from_millis(300));
+    let mut last = 0u64;
+    let remote = loop {
+        tokio::select! {
+            result = &mut upload => break result?,
+            _ = ticker.tick() => {
+                let done = progress.load(Ordering::Relaxed).min(total);
+                if done > t.completed {
+                    t.completed = done;
+                    t.speed = ((done - last) as f64 / 0.3) as u64;
+                    last = done;
+                    save(app, t)?;
+                }
+            }
+        }
+    };
+    if remote.size != total {
         return Err("云端文件大小与本地不一致，请重试".into());
     }
-    t.speed = (t.size as f64 / started.elapsed().as_secs_f64().max(0.001)) as u64;
+    t.speed = (total as f64 / started.elapsed().as_secs_f64().max(0.001)) as u64;
     t.remote_file = Some(remote);
     t.status = "complete".into();
-    t.completed = t.size;
+    t.completed = total;
     t.upload_id.clear();
     save(app, t)?;
     Ok(())
