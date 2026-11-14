@@ -189,6 +189,36 @@ pub struct Task {
     pub bt: Option<BtSource>,
     #[serde(default)]
     pub upload_speed: u64,
+    /// Set when the task came from downloading a whole cloud folder: every
+    /// file of that folder shares the same batch and is shown as one row.
+    #[serde(default)]
+    pub batch: Option<TaskBatch>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskBatch {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub path: String,
+}
+
+/// Builds the grouping metadata for one selected folder. `scope` separates
+/// providers/accounts/shares and the local directory keeps independent copies
+/// apart, while `root_id` identifies the folder inside that scope.
+pub fn folder_batch(
+    scope: &str,
+    root_id: &str,
+    name: &str,
+    path: &str,
+    directory: &std::path::Path,
+) -> TaskBatch {
+    TaskBatch {
+        id: format!("{scope}:{root_id}:{}", directory.to_string_lossy()),
+        name: name.to_string(),
+        path: path.to_string(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -336,6 +366,35 @@ mod tests {
         assert!(task.own.is_none());
         assert_eq!(task.connections, 0);
         assert_eq!(task.share.provider, Provider::Quark);
+        assert!(task.batch.is_none());
+    }
+    #[test]
+    fn folder_batch_is_stable_per_folder_and_directory() {
+        let first = folder_batch(
+            "cloud:quark:acc",
+            "/电影",
+            "电影",
+            "/电影",
+            std::path::Path::new("D:\\Downloads"),
+        );
+        let again = folder_batch(
+            "cloud:quark:acc",
+            "/电影",
+            "电影",
+            "/电影",
+            std::path::Path::new("D:\\Downloads"),
+        );
+        let other_dir = folder_batch(
+            "cloud:quark:acc",
+            "/电影",
+            "电影",
+            "/电影",
+            std::path::Path::new("E:\\Downloads"),
+        );
+        assert_eq!(first.id, again.id);
+        assert_ne!(first.id, other_dir.id);
+        assert_eq!(first.name, "电影");
+        assert_eq!(first.path, "/电影");
     }
     #[test]
     fn file_names_cannot_escape_directory_or_use_devices() {

@@ -126,6 +126,11 @@ const fullFiles = ref<DriveFile[] | null>(null);
 const fullLoading = ref(false);
 const fullTruncated = ref(false);
 let fullKey = "";
+// 非百度网盘没有服务端搜索接口：按下“搜索”时递归遍历当前目录及子目录，
+// 结果单独保存，避免和“全库”加载状态混在一起。
+const searching = ref(false);
+const searchResults = ref<DriveFile[] | null>(null);
+const searchTruncated = ref(false);
 type FolderStep = {
   label: string;
   remote: string;
@@ -144,12 +149,12 @@ const uploading = ref(false);
 const choosingUpload = ref(false);
 const error = ref("");
 const page = ref(1);
-const mode = ref<
-  "" | "upload" | "share" | "mkdir" | "rename" | "delete"
->("");
+const mode = ref<"" | "upload" | "share" | "mkdir" | "rename" | "delete">("");
 const uploadPaths = ref<string[]>([]);
 const uploadDirectory = ref("/");
 const uploadPlan = ref<{ path: string; relative: string }[] | null>(null);
+// 文件夹上传时所有文件共用一个归组 id，上传列表按文件夹合并显示。
+const uploadBatch = ref<{ id: string; name: string } | null>(null);
 const concurrency = ref(4);
 const folderName = ref("");
 const period = ref(7);
@@ -185,10 +190,51 @@ const canDrop = computed(
     !choosingUpload.value,
 );
 const TYPE_EXT: Record<string, string[]> = {
-  video: ["mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "ts", "m4v", "rmvb", "mpeg", "mpg", "3gp"],
+  video: [
+    "mp4",
+    "mkv",
+    "avi",
+    "mov",
+    "wmv",
+    "flv",
+    "webm",
+    "ts",
+    "m4v",
+    "rmvb",
+    "mpeg",
+    "mpg",
+    "3gp",
+  ],
   audio: ["mp3", "flac", "wav", "aac", "ogg", "m4a", "wma", "ape", "opus"],
-  image: ["jpg", "jpeg", "png", "gif", "bmp", "webp", "svg", "ico", "tif", "tiff", "heic", "raw"],
-  text: ["txt", "md", "log", "doc", "docx", "pdf", "xls", "xlsx", "ppt", "pptx", "csv", "rtf", "epub"],
+  image: [
+    "jpg",
+    "jpeg",
+    "png",
+    "gif",
+    "bmp",
+    "webp",
+    "svg",
+    "ico",
+    "tif",
+    "tiff",
+    "heic",
+    "raw",
+  ],
+  text: [
+    "txt",
+    "md",
+    "log",
+    "doc",
+    "docx",
+    "pdf",
+    "xls",
+    "xlsx",
+    "ppt",
+    "pptx",
+    "csv",
+    "rtf",
+    "epub",
+  ],
   font: ["ttf", "otf", "woff", "woff2"],
   subtitle: ["srt", "ass", "ssa", "vtt", "sub"],
   package: ["exe", "msi", "apk", "dmg", "pkg", "deb", "appx", "ipa"],
@@ -221,9 +267,9 @@ const visibleFiles = computed<DriveFile[]>(() => {
     globalMode.value &&
     !!fullFiles.value &&
     !(isBaidu.value && keyword.value.trim());
-  const files = useFull
-    ? fullFiles.value!
-    : listing.value?.files ?? [];
+  const files =
+    searchResults.value ??
+    (useFull ? fullFiles.value! : (listing.value?.files ?? []));
   const key = keyword.value.trim().toLowerCase();
   let result = isBaidu.value
     ? files.slice()
@@ -315,6 +361,11 @@ function pathLabel(target: string): string {
   return "/" + resolved.join("/");
 }
 const scopeLabel = computed(() => {
+  if (searching.value) return "搜索中…";
+  if (searchResults.value) {
+    const count = searchResults.value.length;
+    return `搜索到 ${count} 项${searchTruncated.value ? "（已截断）" : ""}`;
+  }
   if (!globalMode.value) return "";
   if (fullLoading.value) return "全库加载中…";
   const count = fullFiles.value?.length ?? 0;
@@ -352,25 +403,28 @@ async function ensureFull() {
     if (current === revision) fullLoading.value = false;
   }
 }
-const selectedFiles = computed(() =>
-  (listing.value?.files ?? []).filter((file) => selected.value.includes(file.id)),
-);
+const selectedFiles = computed(() => {
+  // 搜索结果可能不在当前分页里，因此从所有已加载的集合里取。
+  const pool = new Map<string, DriveFile>();
+  for (const file of listing.value?.files ?? []) pool.set(file.id, file);
+  for (const file of fullFiles.value ?? []) pool.set(file.id, file);
+  for (const file of searchResults.value ?? []) pool.set(file.id, file);
+  return selected.value
+    .map((id) => pool.get(id))
+    .filter((file): file is DriveFile => !!file);
+});
 const shareFiles = computed(() =>
   shareTargets.value.length ? shareTargets.value : selectedFiles.value,
 );
 const allSelected = computed(
   () =>
     visibleFiles.value.length > 0 &&
-    visibleFiles.value.slice(0, 100).every((file) =>
-      selected.value.includes(file.id),
-    ),
+    visibleFiles.value
+      .slice(0, 100)
+      .every((file) => selected.value.includes(file.id)),
 );
 
-watch(
-  busy,
-  (value) => emit("busy", value),
-  { flush: "sync" },
-);
+watch(busy, (value) => emit("busy", value), { flush: "sync" });
 watch(
   () => props.connected,
   (connected, previous) => {
@@ -418,6 +472,10 @@ async function load(target?: string | Trail[], more = false) {
   const current = ++revision;
   loading.value = true;
   error.value = "";
+  if (!more) {
+    searchResults.value = null;
+    searchTruncated.value = false;
+  }
   try {
     if (isBaidu.value) {
       const dir = typeof target === "string" ? target : path.value;
@@ -433,14 +491,17 @@ async function load(target?: string | Trail[], more = false) {
         keyword: more ? loadedKeyword.value : keyword.value,
       });
       if (current !== revision) return;
-      const previous = more ? listing.value?.files ?? [] : [];
+      const previous = more ? (listing.value?.files ?? []) : [];
       if (more && listing.value && listing.value.accountId !== result.accountId)
         throw new Error("网盘账号已切换，请刷新文件列表");
       const known = new Set(previous.map((file) => file.id));
       listing.value = {
         accountId: result.accountId,
         path: result.path,
-        files: [...previous, ...result.files.filter((file) => !known.has(file.id))],
+        files: [
+          ...previous,
+          ...result.files.filter((file) => !known.has(file.id)),
+        ],
         hasMore: result.hasMore,
         nextCursor: null,
       };
@@ -467,17 +528,20 @@ async function load(target?: string | Trail[], more = false) {
         provider: props.provider,
         path: crumbs[crumbs.length - 1]!.path,
         page: nextPage,
-        cursor: more ? listing.value?.nextCursor ?? null : null,
+        cursor: more ? (listing.value?.nextCursor ?? null) : null,
       });
       if (current !== revision) return;
-      const previous = more ? listing.value?.files ?? [] : [];
+      const previous = more ? (listing.value?.files ?? []) : [];
       if (more && listing.value && listing.value.accountId !== result.accountId)
         throw new Error("网盘账号已切换，请刷新文件列表");
       const known = new Set(previous.map((file) => file.id));
       listing.value = {
         accountId: result.accountId,
         path: result.path,
-        files: [...previous, ...result.files.filter((file) => !known.has(file.id))],
+        files: [
+          ...previous,
+          ...result.files.filter((file) => !known.has(file.id)),
+        ],
         hasMore: result.nextCursor != null,
         nextCursor: result.nextCursor,
       };
@@ -509,8 +573,22 @@ async function load(target?: string | Trail[], more = false) {
 function enter(file: DriveFile) {
   if (!file.isDir || busy.value) return;
   keyword.value = "";
-  if (isBaidu.value) void load(file.path);
-  else void load([...trail.value, { name: file.name, path: file.path }]);
+  if (isBaidu.value) {
+    void load(file.path);
+    return;
+  }
+  const fromSearch = !!searchResults.value;
+  searchResults.value = null;
+  searchTruncated.value = false;
+  if (fromSearch) {
+    // 搜索结果可能来自任意子目录，用完整路径直接进入；上级只保留根。
+    void load([
+      { name: "全部文件", path: "/" },
+      { name: file.name, path: file.path },
+    ]);
+    return;
+  }
+  void load([...trail.value, { name: file.name, path: file.path }]);
 }
 function goCrumb(index: number) {
   if (busy.value) return;
@@ -518,8 +596,45 @@ function goCrumb(index: number) {
   if (isBaidu.value) void load(trail.value[index]!.path);
   else void load(trail.value.slice(0, index + 1));
 }
-function search() {
-  if (isBaidu.value) void load();
+async function search() {
+  if (isBaidu.value) {
+    void load();
+    return;
+  }
+  const key = keyword.value.trim();
+  if (!key) {
+    searchResults.value = null;
+    searchTruncated.value = false;
+    return;
+  }
+  const current = revision;
+  searching.value = true;
+  error.value = "";
+  try {
+    const result = await invoke<{
+      accountId: string;
+      keyword: string;
+      files: DriveFile[];
+      total: number;
+      truncated: boolean;
+    }>("cloud_search", {
+      provider: props.provider,
+      path: path.value,
+      keyword: key,
+    });
+    if (current !== revision) return;
+    searchResults.value = result.files;
+    searchTruncated.value = result.truncated;
+    selected.value = [];
+  } catch (e) {
+    if (current === revision) {
+      error.value = String(e);
+      searchResults.value = null;
+      searchTruncated.value = false;
+    }
+  } finally {
+    if (current === revision) searching.value = false;
+  }
 }
 function selectAll() {
   selected.value = allSelected.value
@@ -542,12 +657,16 @@ async function enqueue(files: DriveFile[]) {
           accountId: listing.value.accountId,
           files,
         });
-    const failure = (tasks || []).find((task) => task && task.status === "error");
+    const failure = (tasks || []).find(
+      (task) => task && task.status === "error",
+    );
     if (failure) emit("error", failure.error ?? "部分文件添加失败");
     else
       emit(
         "notice",
-        `已添加 ${(tasks || []).length} 个任务，正在后台解析下载地址`,
+        files.some((file) => file.isDir)
+          ? `文件夹已加入下载列表（共 ${(tasks || []).length} 个文件），正在后台解析下载地址`
+          : `已添加 ${(tasks || []).length} 个文件下载任务，正在后台解析下载地址`,
       );
     selected.value = [];
     emit("changed");
@@ -576,13 +695,14 @@ async function chooseUpload() {
       directory: false,
       title: `选择要上传到${providerName(props.provider)}的文件`,
     });
-    const paths = (Array.isArray(picked) ? picked : picked ? [picked] : []).filter(
-      (value): value is string => typeof value === "string",
-    );
+    const paths = (
+      Array.isArray(picked) ? picked : picked ? [picked] : []
+    ).filter((value): value is string => typeof value === "string");
     if (!paths.length) return;
     uploadPaths.value = paths;
     uploadDirectory.value = directory;
     uploadPlan.value = null;
+    uploadBatch.value = null;
     modalError.value = "";
     created.value = null;
     mode.value = "upload";
@@ -616,6 +736,12 @@ async function chooseUploadFolder() {
     uploadPlan.value = entries;
     uploadPaths.value = entries.map((entry) => entry.path);
     uploadDirectory.value = directory;
+    const rootName =
+      folder.split(/[\\/]/).filter(Boolean).pop()?.trim() || "上传文件夹";
+    uploadBatch.value = {
+      id: `upload:${props.provider}:${listing.value?.accountId ?? ""}:${directory}:${rootName}`,
+      name: rootName,
+    };
     modalError.value = "";
     created.value = null;
     mode.value = "upload";
@@ -636,6 +762,7 @@ async function enqueueUploads(paths: string[], directory: string) {
     directory,
     paths: files,
     concurrency: concurrency.value,
+    batch: null,
   });
   mode.value = "";
   uploadPlan.value = null;
@@ -654,7 +781,9 @@ async function findRemoteDir(
       page: 1,
       keyword: "",
     });
-    return result.files.find((file) => file.isDir && file.name === name) ?? null;
+    return (
+      result.files.find((file) => file.isDir && file.name === name) ?? null
+    );
   }
   let page = 1;
   let cursor: string | undefined;
@@ -668,9 +797,7 @@ async function findRemoteDir(
       page,
       cursor,
     });
-    const hit = result.files.find(
-      (file) => file.isDir && file.name === name,
-    );
+    const hit = result.files.find((file) => file.isDir && file.name === name);
     if (hit) return hit;
     if (!result.nextCursor) break;
     cursor = result.nextCursor;
@@ -748,12 +875,12 @@ async function pollFolder() {
         (task) => remoteParent(task.remotePath) === step.remote,
       );
       if (!tasks.length) continue;
-      const finished = tasks.filter((task) => task.status === "complete").length;
+      const finished = tasks.filter(
+        (task) => task.status === "complete",
+      ).length;
       const errored = tasks.filter((task) => task.status === "error").length;
       step.done = finished;
-      step.percent = step.total
-        ? Math.round((finished / step.total) * 100)
-        : 0;
+      step.percent = step.total ? Math.round((finished / step.total) * 100) : 0;
       step.status =
         finished + errored >= step.total && step.total > 0
           ? errored
@@ -829,8 +956,7 @@ async function enqueueFolder(
     }
     const groups = new Map<string, string[]>();
     for (const entry of plan) {
-      const target =
-        directoryMap.get(entry.relative || "") ?? directory;
+      const target = directoryMap.get(entry.relative || "") ?? directory;
       const bucket = groups.get(target) ?? [];
       bucket.push(entry.path);
       groups.set(target, bucket);
@@ -845,6 +971,7 @@ async function enqueueFolder(
           directory: target,
           paths: chunk,
           concurrency: concurrency.value,
+          batch: uploadBatch.value,
         });
         total += chunk.length;
       }
@@ -1046,20 +1173,16 @@ onMounted(async () => {
       <form class="drive-search" @submit.prevent="search">
         <Search :size="16" /><input
           v-model="keyword"
-          :placeholder="isBaidu ? '搜索当前目录及子目录' : '筛选已加载的文件'"
+          placeholder="搜索当前目录及子目录"
           aria-label="搜索网盘文件"
           maxlength="128"
           :disabled="busy"
-        /><button v-if="isBaidu" class="text-button" :disabled="busy">
-          搜索
+        /><button class="text-button" :disabled="busy || searching">
+          {{ searching ? "搜索中…" : "搜索" }}
         </button>
       </form>
       <span class="drive-toolbar-spacer" />
-      <button
-        v-if="!connected"
-        class="primary"
-        @click="emit('login')"
-      >
+      <button v-if="!connected" class="primary" @click="emit('login')">
         <UserRound :size="16" />登录{{ providerName(provider) }}
       </button>
       <div
@@ -1068,11 +1191,7 @@ onMounted(async () => {
         @mouseenter="uploadMenuOpen = true"
         @mouseleave="uploadMenuOpen = false"
       >
-        <button
-          class="secondary"
-          :disabled="!canDrop"
-          @click="chooseUpload"
-        >
+        <button class="secondary" :disabled="!canDrop" @click="chooseUpload">
           <CloudUpload :size="16" />上传文件
         </button>
         <div v-if="uploadMenuOpen" class="drive-menu menu-upload" @click.stop>
@@ -1235,7 +1354,9 @@ onMounted(async () => {
             </div>
             <div class="filter-foot">
               <button class="secondary reset" @click="resetFilter">重置</button>
-              <button class="secondary" @click="filterOpen = false">取消</button>
+              <button class="secondary" @click="filterOpen = false">
+                取消
+              </button>
               <button class="primary" @click="applyFilter">确认</button>
             </div>
           </div>
@@ -1252,22 +1373,29 @@ onMounted(async () => {
     </div>
 
     <div v-if="viewMode === 'grid' && selected.length" class="drive-batchbar">
-      <span class="batch-count">已选中 <b>{{ selected.length }}</b> 项</span>
+      <span class="batch-count"
+        >已选中 <b>{{ selected.length }}</b> 项</span
+      >
       <button class="text-button batch-clear" @click="selected = []">
         取消选中
       </button>
       <span class="batch-spacer" />
       <div class="batch-actions">
         <button class="primary" :disabled="busy" @click="download">
-          <LoaderCircle v-if="adding" class="spinning" :size="16" /><ArrowDownToLine
-            v-else
+          <LoaderCircle
+            v-if="adding"
+            class="spinning"
             :size="16"
-          />下载
+          /><ArrowDownToLine v-else :size="16" />下载
         </button>
         <button
           class="secondary"
           :disabled="!canShare || busy"
-          :title="canShare ? '创建分享链接' : `${providerName(provider)}暂不支持创建分享`"
+          :title="
+            canShare
+              ? '创建分享链接'
+              : `${providerName(provider)}暂不支持创建分享`
+          "
           @click="prepareShare()"
         >
           <Share2 :size="16" />分享
@@ -1275,7 +1403,9 @@ onMounted(async () => {
         <button
           class="secondary"
           :disabled="!canDelete || busy"
-          :title="canDelete ? '删除所选' : `${providerName(provider)}暂不支持删除`"
+          :title="
+            canDelete ? '删除所选' : `${providerName(provider)}暂不支持删除`
+          "
           @click="openDelete()"
         >
           <Trash2 :size="16" />删除
@@ -1330,7 +1460,10 @@ onMounted(async () => {
       :class="{ 'view-grid': viewMode === 'grid' }"
       :aria-busy="loading"
     >
-      <div class="drive-file-head" :class="{ 'head-selected': selected.length }">
+      <div
+        class="drive-file-head"
+        :class="{ 'head-selected': selected.length }"
+      >
         <input
           type="checkbox"
           :checked="allSelected"
@@ -1383,7 +1516,11 @@ onMounted(async () => {
               <button
                 class="batch-btn"
                 :disabled="!canDelete || busy"
-                :title="canDelete ? '删除所选' : `${providerName(provider)}暂不支持删除`"
+                :title="
+                  canDelete
+                    ? '删除所选'
+                    : `${providerName(provider)}暂不支持删除`
+                "
                 @click="openDelete()"
               >
                 <Trash2 :size="15" />删除
@@ -1437,8 +1574,7 @@ onMounted(async () => {
           type="checkbox"
           :value="file.id"
           :disabled="
-            busy ||
-            (selected.length >= 100 && !selected.includes(file.id))
+            busy || (selected.length >= 100 && !selected.includes(file.id))
           "
           :aria-label="`选择 ${file.name}`"
         />
@@ -1513,9 +1649,7 @@ onMounted(async () => {
               : "这个文件夹还是空的"
           }}
         </p>
-        <span v-if="canUpload && !keyword"
-          >拖入本地文件或点击「上传文件」</span
-        >
+        <span v-if="canUpload && !keyword">拖入本地文件或点击「上传文件」</span>
       </div>
       <button
         v-if="listing?.hasMore && !globalMode"
@@ -1537,7 +1671,11 @@ onMounted(async () => {
   </div>
 
   <Teleport to="body"
-    ><div v-if="mode" class="modal-backdrop" @click.self="!modalBusy && (mode = '')">
+    ><div
+      v-if="mode"
+      class="modal-backdrop"
+      @click.self="!modalBusy && (mode = '')"
+    >
       <form class="cloud-dialog" @submit.prevent="submit">
         <div class="dialog-heading">
           <h2>
@@ -1569,7 +1707,9 @@ onMounted(async () => {
           {{ modalError }}
         </div>
         <template v-if="mode === 'upload'"
-          ><label>目标目录<input :value="pathLabel(uploadDirectory)" readonly /></label>
+          ><label
+            >目标目录<input :value="pathLabel(uploadDirectory)" readonly
+          /></label>
           <ul class="review-files">
             <li v-for="file in uploadPaths" :key="file" :title="file">
               {{ file.split(/[\\/]/).pop() }}

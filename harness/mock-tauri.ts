@@ -23,8 +23,81 @@ const ALL: Provider[] = [
   "ilanzou",
 ];
 
+const folderBatch = {
+  id: "cloud:quark:quark-acc:/电影:D:\\Downloads",
+  name: "电影",
+  path: "/电影",
+};
+
+const task = (
+  id: string,
+  name: string,
+  status: string,
+  size: number,
+  completed: number,
+  speed: number,
+  batch: typeof folderBatch | null = null,
+  error = "",
+) => ({
+  id,
+  name,
+  size,
+  completed,
+  speed,
+  status,
+  error,
+  directory: "D:\\Downloads",
+  createdAt: 1762000000,
+  share: { provider: "quark", id: "", passcode: "" },
+  file: { id, name, size, isDir: false, parentId: "" },
+  ...(batch ? { batch } : {}),
+});
+
 const state = {
-  loggedIn: { quark: true, baidu: true, pan115: true } as Record<string, boolean>,
+  tasks: [
+    task(
+      "movie-1",
+      "流浪地球3.2027.2160p.mkv",
+      "active",
+      8_589_934_592,
+      4_294_967_296,
+      12_582_912,
+      folderBatch,
+    ),
+    task(
+      "movie-2",
+      "满江红.2023.1080p.mkv",
+      "waiting",
+      2_147_483_648,
+      0,
+      0,
+      folderBatch,
+    ),
+    task(
+      "movie-3",
+      "深海.2023.2160p.mkv",
+      "paused",
+      6_442_450_944,
+      2_147_483_648,
+      0,
+      folderBatch,
+    ),
+    task("iso-1", "系统镜像.iso", "complete", 5_368_709_120, 5_368_709_120, 0),
+    task(
+      "broken-1",
+      "损坏的视频.mp4",
+      "error",
+      1_073_741_824,
+      0,
+      0,
+      null,
+      "下载地址已过期",
+    ),
+  ],
+  loggedIn: { quark: true, baidu: true, pan115: true } as Record<
+    string,
+    boolean
+  >,
   names: {
     quark: "夸克用户_8823",
     baidu: "百度网友ab12",
@@ -142,11 +215,11 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
   if (cmd === "snapshot") {
     return {
       accounts: ALL.map(account),
-      tasks: [],
+      tasks: state.tasks.map((task) => ({ ...task })),
       downloadDir: "D:\\Downloads",
       engineRunning: true,
       engineError: "",
-      uploads: state.uploads,
+      uploads: state.uploads.map((upload) => ({ ...upload })),
       shares: [],
       settings: { ...settings },
     };
@@ -170,6 +243,22 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
       path: args.path,
       files: driveFiles(args.provider),
       nextCursor: null,
+    };
+  }
+  if (cmd === "cloud_search") {
+    if (!state.loggedIn[args.provider]) throw "未登录，请先连接账号";
+    const key = String(args.keyword ?? "")
+      .trim()
+      .toLowerCase();
+    const files = driveFiles(args.provider).filter((file) =>
+      file.name.toLowerCase().includes(key),
+    );
+    return {
+      accountId: `${args.provider}-acc`,
+      keyword: args.keyword,
+      files,
+      total: files.length,
+      truncated: false,
     };
   }
   if (cmd === "drive_list") {
@@ -227,10 +316,48 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
         status,
         provider: args.provider,
         concurrency: 2,
+        batch: args.batch ?? null,
       };
       state.uploads.push(record);
       return record;
     });
+  }
+  if (cmd === "upload_batch_action") {
+    const ids = new Set(((args.ids as string[]) ?? []).map(String));
+    const action = String(args.action ?? "");
+    if (action === "remove") {
+      const before = state.uploads.length;
+      state.uploads = state.uploads.filter((u) => !ids.has(String(u.id)));
+      return { done: before - state.uploads.length, failed: [] };
+    }
+    let done = 0;
+    for (const upload of state.uploads) {
+      if (!ids.has(String(upload.id))) continue;
+      const status = String(upload.status);
+      if (
+        action === "pause" &&
+        ["waiting", "hashing", "active"].includes(status)
+      ) {
+        upload.status = "paused";
+        done += 1;
+      } else if (action === "resume" && ["paused", "error"].includes(status)) {
+        upload.status = "waiting";
+        done += 1;
+      }
+    }
+    return { done, failed: [] };
+  }
+  if (cmd === "upload_action") {
+    const id = String(args.id ?? "");
+    const action = String(args.action ?? "");
+    const upload = state.uploads.find((u) => String(u.id) === id);
+    if (!upload) throw new Error("上传任务不存在");
+    if (action === "remove") {
+      state.uploads = state.uploads.filter((u) => String(u.id) !== id);
+    } else {
+      upload.status = action === "pause" ? "paused" : "waiting";
+    }
+    return null;
   }
   if (cmd === "collect_local_files") {
     const root = String(args.root ?? "");
@@ -253,7 +380,8 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
     };
   }
   if (cmd === "drive_share") {
-    const names = (args.files as { name: string }[] | undefined)?.map((f) => f.name) ?? [];
+    const names =
+      (args.files as { name: string }[] | undefined)?.map((f) => f.name) ?? [];
     return {
       id: `mock-${args.provider ?? "baidu"}-share`,
       url: `https://${args.provider ?? "baidu"}.example.com/s/1mockShare`,
@@ -271,6 +399,36 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
   }
   if (cmd === "drive_delete_at") {
     return null;
+  }
+  if (cmd === "task_action") {
+    const index = state.tasks.findIndex((t) => t.id === args.id);
+    if (index < 0) throw "下载任务不存在";
+    if (args.action === "remove") state.tasks.splice(index, 1);
+    else if (args.action === "pause")
+      state.tasks[index] = {
+        ...state.tasks[index],
+        status: "paused",
+        speed: 0,
+      };
+    else if (args.action === "resume")
+      state.tasks[index] = { ...state.tasks[index], status: "waiting" };
+    return null;
+  }
+  if (cmd === "task_batch_action") {
+    const ids = new Set<string>(Array.isArray(args.ids) ? args.ids : []);
+    if (args.action === "remove")
+      state.tasks = state.tasks.filter((t) => !ids.has(t.id));
+    else
+      state.tasks = state.tasks.map((t) =>
+        ids.has(t.id)
+          ? {
+              ...t,
+              status: args.action === "pause" ? "paused" : "waiting",
+              speed: 0,
+            }
+          : t,
+      );
+    return { done: ids.size, failed: [] };
   }
   // feat merge: settings + in-app updater.
   if (cmd === "settings_get") return { ...settings };

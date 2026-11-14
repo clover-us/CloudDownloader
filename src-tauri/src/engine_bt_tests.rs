@@ -92,6 +92,7 @@ fn task(directory: &Path, torrent: &bt::Torrent) -> Task {
         direct: None,
         connections: 0,
         upload_speed: 0,
+        batch: None,
         bt: Some(BtSource {
             info_hash: torrent.info_hash.clone(),
             piece_length: torrent.piece_length,

@@ -75,6 +75,9 @@ pub struct UploadRecord {
     /// 分片续传所需的服务端会话信息（迅雷/夸克 OSS 会话），空表示无。
     #[serde(default)]
     pub session: serde_json::Value,
+    /// 文件夹上传的归组信息；空表示单个文件。
+    #[serde(default)]
+    pub batch: Option<crate::model::TaskBatch>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -94,6 +97,7 @@ pub struct UploadView {
     pub completed_parts: usize,
     pub total_parts: usize,
     pub provider: Provider,
+    pub batch: Option<crate::model::TaskBatch>,
 }
 impl From<UploadRecord> for UploadView {
     fn from(t: UploadRecord) -> Self {
@@ -112,6 +116,7 @@ impl From<UploadRecord> for UploadView {
             speed: t.speed,
             created_at: t.created_at,
             provider: t.provider,
+            batch: t.batch,
         }
     }
 }
@@ -1184,6 +1189,7 @@ mod tests {
             part_size: 0,
             part_etags: Vec::new(),
             session: serde_json::Value::Null,
+            batch: None,
         };
         (PathBufGuard(path), record)
     }

@@ -642,7 +642,9 @@ button.directory:hover {
 .task-heading {
   display: flex;
   align-items: center;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-height: 32px;
   margin: 21px 0 12px;
 }
 .task-heading > div:first-child {
@@ -690,18 +692,24 @@ button.directory:hover {
   overflow: hidden;
 }
 .task-workspace > .task-list {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 110px;
-  overflow: auto;
+  overflow: hidden;
   border-inline: 0;
-  border-radius: 0;
   border-bottom: 0;
+}
+.task-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
 }
 .task-row {
   display: flex;
   align-items: center;
   gap: 15px;
-  padding: 21px 6px;
+  padding: 21px 20px;
   border-bottom: 1px solid var(--line);
 }
 .main-content:not(.task-workspace) .task-row {
@@ -894,6 +902,174 @@ button.directory:hover {
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
+
+/* Download list: folder grouping, row selection and batch actions. */
+.task-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+.task-select-all input,
+.task-select input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.task-select {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.task-expand {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+.task-expand:hover {
+  color: var(--ink);
+  background: var(--surface-soft);
+}
+.task-expand svg {
+  transition: transform 0.15s ease;
+}
+.task-expand svg.open {
+  transform: rotate(90deg);
+}
+.task-file-icon.folder {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+.task-group-row {
+  position: relative;
+  background: color-mix(in srgb, var(--accent) 3%, transparent);
+}
+.task-group-row .task-expand {
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translateY(-50%);
+}
+.task-child-row {
+  padding-left: 44px;
+  background: color-mix(in srgb, var(--surface-soft) 45%, transparent);
+}
+.task-child-row .task-file-icon {
+  width: 34px;
+  height: 38px;
+}
+.task-list-head {
+  position: relative;
+  z-index: 3;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--line);
+  border-radius: 11px 11px 0 0;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 11px;
+}
+.task-list-head.head-selected {
+  background: var(--surface-soft);
+}
+.task-list-head .head-label {
+  margin-left: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.task-list-head .batch-count {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.task-list-head .batch-count b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.task-list-head .batch-clear {
+  padding: 2px 4px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.task-list-head .batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.task-list-head .batch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  padding: 3px 9px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.task-list-head .batch-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+.task-list-head .batch-btn.danger {
+  color: var(--danger);
+}
+.task-list-head .batch-btn.danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
+.task-list-head .batch-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.task-list-head .batch-spacer {
+  flex: 1;
+}
+.task-list-head .task-clear {
+  margin-right: 10px;
+}
+.task-clear {
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  font-size: 11px;
+  white-space: nowrap;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.task-clear:hover {
+  color: var(--danger);
+}
+/* Upload list: same header band, aligned with its own row checkbox column. */
 .transfer-footer {
   display: flex;
   align-items: center;
@@ -1139,9 +1315,9 @@ button.directory:hover {
   padding: 16px;
 }
 .drive-search {
-  flex: 0 1 340px;
-  min-width: 200px;
-  margin-left: 0;
+  flex: 0 1 292px;
+  min-width: 180px;
+  margin-left: 16px;
   padding: 4px 8px;
 }
 .drive-search input {

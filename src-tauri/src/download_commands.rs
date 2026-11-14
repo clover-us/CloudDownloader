@@ -420,6 +420,7 @@ pub async fn enqueue_bt(
         direct: None,
         connections: 0,
         upload_speed: 0,
+        batch: None,
         bt: Some(BtSource {
             info_hash,
             piece_length: torrent.piece_length,
@@ -431,7 +432,7 @@ pub async fn enqueue_bt(
         }),
     };
     bt::mark(&task)?;
-    start_task(&app, &state, task, None).await
+    start_task(&app, &state, task, None, None).await
 }
 
 #[cfg(test)]

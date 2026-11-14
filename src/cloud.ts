@@ -30,6 +30,7 @@ export type UploadTask = {
   completedParts: number;
   totalParts: number;
   provider: string;
+  batch?: { id: string; name: string; path?: string } | null;
 };
 export type CreatedShare = {
   id: string;

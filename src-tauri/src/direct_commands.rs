@@ -75,6 +75,7 @@ pub async fn enqueue_direct(
         connections: 0,
         bt: None,
         upload_speed: 0,
+        batch: None,
     };
-    start_task(&app, &state, task, Some(metadata)).await
+    start_task(&app, &state, task, Some(metadata), None).await
 }

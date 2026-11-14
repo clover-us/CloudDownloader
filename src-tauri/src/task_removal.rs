@@ -172,6 +172,7 @@ mod tests {
                 connections: 0,
                 bt: None,
                 upload_speed: 0,
+                batch: None,
             };
             self.store().save(&task).unwrap();
             task

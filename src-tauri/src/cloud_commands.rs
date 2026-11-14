@@ -1,7 +1,10 @@
 use crate::{
     model::*, providers::cloud::Listing, resolve_tasks_in_background, session, trusted, AppState,
 };
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+    collections::{HashSet, VecDeque},
+    path::PathBuf,
+};
 use tauri::{State, WebviewWindow};
 
 #[tauri::command]
@@ -157,6 +160,123 @@ pub async fn dir_list_all(
     })
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchListing {
+    pub account_id: String,
+    pub keyword: String,
+    pub files: Vec<DriveFile>,
+    pub total: usize,
+    pub truncated: bool,
+}
+
+/// Search file names under `path`, walking sub-folders. Providers other than
+/// Baidu have no server-side search API, so the walk is capped to keep one
+/// search cheap; `truncated` tells the UI the result is partial.
+#[tauri::command]
+pub async fn cloud_search(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+    provider: Provider,
+    path: String,
+    keyword: String,
+) -> Result<SearchListing, String> {
+    trusted(&window)?;
+    let keyword = keyword.trim().to_string();
+    if keyword.is_empty() {
+        return Err("请输入搜索关键词".into());
+    }
+    if keyword.chars().count() > 128 {
+        return Err("搜索关键词过长".into());
+    }
+    if provider == Provider::Baidu {
+        return Err("百度网盘请直接搜索目录".into());
+    }
+    let session = session::connect(&app, provider).await?;
+    let account_id = session.cloud_identity().await?.0;
+    let needle = keyword.to_lowercase();
+    // 逐层并发遍历子目录：网盘接口单次请求较慢，串行遍历会让搜索等待过久。
+    const MAX_DIRS: usize = 400;
+    const MAX_ENTRIES: usize = 20000;
+    const MAX_MATCHES: usize = 1000;
+    const CONCURRENCY: usize = 4;
+    let mut pending: VecDeque<String> = VecDeque::from([path]);
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut files: Vec<DriveFile> = Vec::new();
+    let mut scanned = 0usize;
+    let mut truncated = false;
+    'walk: while !pending.is_empty() {
+        let mut batch: Vec<String> = Vec::new();
+        while batch.len() < CONCURRENCY && !pending.is_empty() {
+            let dir = pending.pop_front().expect("queue is non-empty");
+            if visited.insert(dir.clone()) {
+                batch.push(dir);
+            }
+        }
+        if batch.is_empty() {
+            continue;
+        }
+        if visited.len() > MAX_DIRS {
+            truncated = true;
+            break;
+        }
+        let results = futures_util::future::join_all(
+            batch.iter().map(|dir| session.cloud_page(dir, 1, None)),
+        )
+        .await;
+        for (dir, first) in batch.iter().zip(results) {
+            let mut listing = first?;
+            let mut page = 1u32;
+            loop {
+                let entries = std::mem::take(&mut listing.entries);
+                for entry in entries {
+                    scanned += 1;
+                    if scanned > MAX_ENTRIES {
+                        truncated = true;
+                        break 'walk;
+                    }
+                    let file = entry.file;
+                    if file.name.to_lowercase().contains(&needle) && seen.insert(file.id.clone()) {
+                        files.push(file.clone());
+                    }
+                    if file.is_dir && !file.path.is_empty() {
+                        pending.push_back(file.path);
+                    }
+                    if files.len() >= MAX_MATCHES {
+                        truncated = true;
+                        break 'walk;
+                    }
+                }
+                match listing.next {
+                    Some(cursor) if page < 100 => {
+                        page += 1;
+                        listing = session.cloud_page(dir, page, Some(&cursor)).await?;
+                    }
+                    _ => break,
+                }
+            }
+        }
+    }
+    files.sort_by(|a, b| {
+        if a.is_dir != b.is_dir {
+            return if a.is_dir {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Greater
+            };
+        }
+        a.name.to_lowercase().cmp(&b.name.to_lowercase())
+    });
+    Ok(SearchListing {
+        account_id,
+        keyword,
+        total: files.len(),
+        files,
+        truncated,
+    })
+}
+
 #[tauri::command]
 pub async fn cloud_enqueue(
     window: WebviewWindow,
@@ -184,6 +304,7 @@ pub async fn cloud_enqueue(
             .ok_or("请先选择下载目录")?,
     );
     let mut pending = Vec::new();
+    let scope = format!("cloud:{}:{account_id}", provider.key());
     for selected in files {
         let fresh = session.cloud_find(&selected).await?.file;
         if fresh.size != selected.size
@@ -192,11 +313,16 @@ pub async fn cloud_enqueue(
         {
             return Err("文件列表已变化，请刷新后重新选择".into());
         }
-        pending.push((fresh, directory.clone()));
+        // A selected folder becomes one grouped download row; individual files
+        // keep their usual one-row-per-file behaviour.
+        let group = fresh
+            .is_dir
+            .then(|| folder_batch(&scope, &fresh.path, &fresh.name, &fresh.path, &directory));
+        pending.push((fresh, directory.clone(), group));
     }
     let mut visited = HashSet::new();
     let mut downloads = Vec::new();
-    while let Some((file, directory)) = pending.pop() {
+    while let Some((file, directory, group)) = pending.pop() {
         if !visited.insert(file.id.clone()) {
             continue;
         }
@@ -209,12 +335,13 @@ pub async fn cloud_enqueue(
                 let batch = session
                     .cloud_page(&file.path, page, cursor.as_deref())
                     .await?;
-                pending.extend(
-                    batch
-                        .entries
-                        .into_iter()
-                        .map(|entry| (entry.file, directory.join(safe_name(&file.name)))),
-                );
+                pending.extend(batch.entries.into_iter().map(|entry| {
+                    (
+                        entry.file,
+                        directory.join(safe_name(&file.name)),
+                        group.clone(),
+                    )
+                }));
                 if visited.len() + pending.len() > 10000 {
                     return Err("所选文件超过 10000 项，请分批下载".into());
                 }
@@ -227,20 +354,30 @@ pub async fn cloud_enqueue(
                 }
             }
         } else {
-            downloads.push((file, directory))
+            downloads.push((file, directory, group))
         }
     }
     let mut tasks = Vec::new();
-    for (file, directory) in downloads {
+    for (file, directory, group) in downloads {
         let existing = state.store.lock().unwrap().tasks()?;
-        if existing.iter().any(|task| {
+        let duplicate = existing.iter().position(|task| {
             task.share.provider == provider
                 && task.own.as_ref().is_some_and(|source| {
                     source.account_id == account_id && source.file.id == file.id
                 })
                 && task.directory == directory.to_string_lossy()
                 && !matches!(task.status.as_str(), "error" | "cancelled")
-        }) {
+        });
+        if let Some(index) = duplicate {
+            // Adopt tasks created before folder grouping so the folder row can
+            // still account for the whole download.
+            if let Some(group) = &group {
+                let mut task = existing[index].clone();
+                if task.batch.is_none() {
+                    task.batch = Some(group.clone());
+                    state.store.lock().unwrap().save(&task)?;
+                }
+            }
             continue;
         }
         let name = crate::direct::available_name(&directory, &file.name, &existing);
@@ -276,6 +413,7 @@ pub async fn cloud_enqueue(
             connections: 0,
             bt: None,
             upload_speed: 0,
+            batch: group.clone(),
         };
         state.store.lock().unwrap().save(&task)?;
         tasks.push(task);

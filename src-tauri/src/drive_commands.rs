@@ -246,11 +246,23 @@ pub async fn drive_enqueue(
         .ok_or("请先选择下载目录")?;
     let mut pending = fresh
         .into_iter()
-        .map(|f| (f, PathBuf::from(&directory)))
+        .map(|file| {
+            let root = PathBuf::from(&directory);
+            let group = file.is_dir.then(|| {
+                folder_batch(
+                    &format!("drive:baidu:{account_id}"),
+                    &file.path,
+                    &file.name,
+                    &file.path,
+                    &root,
+                )
+            });
+            (file, root, group)
+        })
         .collect::<Vec<_>>();
     let mut visited = HashSet::new();
     let mut downloads = Vec::new();
-    while let Some((file, dir)) = pending.pop() {
+    while let Some((file, dir, group)) = pending.pop() {
         if !visited.insert(file.id.clone()) {
             continue;
         }
@@ -264,7 +276,12 @@ pub async fn drive_enqueue(
                     return Err("百度账号已切换，请重新选择文件".into());
                 }
                 let subdir = dir.join(safe_name(&file.name));
-                pending.extend(listing.files.into_iter().map(|f| (f, subdir.clone())));
+                pending.extend(
+                    listing
+                        .files
+                        .into_iter()
+                        .map(|f| (f, subdir.clone(), group.clone())),
+                );
                 if pending.len() + visited.len() > 10000 {
                     return Err("所选文件过多，请分批下载".into());
                 }
@@ -273,19 +290,27 @@ pub async fn drive_enqueue(
                 }
             }
         } else {
-            downloads.push((file, dir));
+            downloads.push((file, dir, group));
         }
     }
     let mut created = Vec::new();
-    for (file, dir) in downloads {
+    for (file, dir, group) in downloads {
         let existing = state.store.lock().unwrap().tasks()?;
-        if existing.iter().any(|t| {
+        let duplicate = existing.iter().position(|t| {
             t.own
                 .as_ref()
                 .is_some_and(|s| s.account_id == account_id && s.file.id == file.id)
                 && t.directory == dir.to_string_lossy()
                 && !matches!(t.status.as_str(), "error" | "cancelled")
-        }) {
+        });
+        if let Some(index) = duplicate {
+            if let Some(group) = &group {
+                let mut task = existing[index].clone();
+                if task.batch.is_none() {
+                    task.batch = Some(group.clone());
+                    state.store.lock().unwrap().save(&task)?;
+                }
+            }
             continue;
         }
         let base = safe_name(&file.name);
@@ -339,6 +364,7 @@ pub async fn drive_enqueue(
             connections: 0,
             bt: None,
             upload_speed: 0,
+            batch: group.clone(),
         };
         state.store.lock().unwrap().save(&task)?;
         created.push(task);
@@ -428,6 +454,7 @@ pub async fn upload_enqueue(
     directory: String,
     paths: Vec<String>,
     concurrency: usize,
+    batch: Option<crate::model::TaskBatch>,
 ) -> Result<Vec<UploadView>, String> {
     trusted(&window)?;
     if paths.is_empty() || paths.len() > 100 {
@@ -513,6 +540,7 @@ pub async fn upload_enqueue(
             part_size: 0,
             part_etags: Vec::new(),
             session: serde_json::Value::Null,
+            batch: batch.clone(),
         });
     }
     // 目标目录已有的文件名集合，用于同名自动追加序号。
@@ -591,6 +619,42 @@ pub async fn upload_enqueue(
     Ok(records.into_iter().map(Into::into).collect())
 }
 
+async fn apply_upload_action(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    mut task: upload::UploadRecord,
+    action: &str,
+) -> Result<(), String> {
+    match action {
+        "pause" => {
+            if task.status == "merging" {
+                return Err("正在提交云端文件，请等待提交完成".into());
+            }
+            state.uploads.pause(&task.id);
+        }
+        "resume" => {
+            if !matches!(task.status.as_str(), "paused" | "error") {
+                return Err("任务当前不能恢复".into());
+            }
+            if state.uploads.is_running(&task.id) {
+                return Err("任务正在暂停，请稍后重试".into());
+            }
+            task.status = "waiting".into();
+            task.error.clear();
+            state.store.lock().unwrap().save_upload(&task)?;
+            state.uploads.start(app.clone(), task)?;
+        }
+        "remove" => {
+            if state.uploads.is_running(&task.id) {
+                return Err("请先暂停上传，再移除任务".into());
+            }
+            state.store.lock().unwrap().remove_upload(&task.id)?;
+        }
+        _ => return Err("未知上传操作".into()),
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn upload_action(
     window: WebviewWindow,
@@ -601,7 +665,7 @@ pub async fn upload_action(
 ) -> Result<(), String> {
     trusted(&window)?;
     let _guard = state.resolving.lock().await;
-    let mut task = state
+    let task = state
         .store
         .lock()
         .unwrap()
@@ -609,34 +673,77 @@ pub async fn upload_action(
         .into_iter()
         .find(|t| t.id == id)
         .ok_or("上传任务不存在")?;
-    match action.as_str() {
-        "pause" => {
-            if task.status == "merging" {
-                return Err("正在提交云端文件，请等待提交完成".into());
-            }
-            state.uploads.pause(&id);
-        }
-        "resume" => {
-            if !matches!(task.status.as_str(), "paused" | "error") {
-                return Err("任务当前不能恢复".into());
-            }
-            if state.uploads.is_running(&id) {
-                return Err("任务正在暂停，请稍后重试".into());
-            }
-            task.status = "waiting".into();
-            task.error.clear();
-            state.store.lock().unwrap().save_upload(&task)?;
-            state.uploads.start(app, task)?;
-        }
-        "remove" => {
-            if state.uploads.is_running(&id) {
-                return Err("请先暂停上传，再移除任务".into());
-            }
-            state.store.lock().unwrap().remove_upload(&id)?;
-        }
-        _ => return Err("未知上传操作".into()),
+    apply_upload_action(&app, &state, task, &action).await
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadBatchReport {
+    pub done: usize,
+    pub failed: Vec<UploadBatchFailure>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadBatchFailure {
+    pub id: String,
+    pub message: String,
+}
+
+/// Runs one action across a selection of uploads. Records an action cannot
+/// touch (an uploading file for `remove`, a merging upload for `pause`) are
+/// skipped instead of failing the whole batch.
+#[tauri::command]
+pub async fn upload_batch_action(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+    action: String,
+) -> Result<UploadBatchReport, String> {
+    trusted(&window)?;
+    if ids.is_empty() {
+        return Err("请先选择上传任务".into());
     }
-    Ok(())
+    if ids.len() > 10000 {
+        return Err("一次最多操作 10000 个上传任务".into());
+    }
+    if !matches!(action.as_str(), "pause" | "resume" | "remove") {
+        return Err("未知上传操作".into());
+    }
+    let _guard = state.resolving.lock().await;
+    let all = state.store.lock().unwrap().uploads()?;
+    let mut report = UploadBatchReport {
+        done: 0,
+        failed: Vec::new(),
+    };
+    let mut seen = HashSet::new();
+    for id in ids {
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        let Some(task) = all.iter().find(|t| t.id == id).cloned() else {
+            report.failed.push(UploadBatchFailure {
+                id,
+                message: "上传任务不存在".into(),
+            });
+            continue;
+        };
+        let running = state.uploads.is_running(&id);
+        let applies = match action.as_str() {
+            "pause" => matches!(task.status.as_str(), "waiting" | "hashing" | "active"),
+            "resume" => matches!(task.status.as_str(), "paused" | "error") && !running,
+            _ => !running,
+        };
+        if !applies {
+            continue;
+        }
+        match apply_upload_action(&app, &state, task, &action).await {
+            Ok(()) => report.done += 1,
+            Err(message) => report.failed.push(UploadBatchFailure { id, message }),
+        }
+    }
+    Ok(report)
 }
 
 /// 递归收集本地文件夹内的全部文件，带相对子目录（保留目录结构上传用）。

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { version } from "../package.json";
@@ -14,6 +14,8 @@ import {
   RotateCw,
   Sparkles,
   Check,
+  ChevronDown,
+  ChevronUp,
   Sun,
   Moon,
 } from "@lucide/vue";
@@ -183,6 +185,145 @@ function applyMinSplit() {
   }
 }
 
+type StepperField =
+  | "limit"
+  | "concurrent"
+  | "minSplit"
+  | "uploadChunk"
+  | "uploadConcurrent"
+  | "uploadPartConcurrent";
+
+type StepConfig = {
+  value: () => number;
+  store: (next: number) => void;
+  min: number;
+  max: number;
+  step: number;
+  apply: () => void;
+};
+
+function stepConfig(field: StepperField): StepConfig {
+  switch (field) {
+    case "limit":
+      return {
+        value: () => limitInput.value,
+        store: (next) => (limitInput.value = next),
+        min: 0,
+        max: maxLimitMib,
+        step: 0.5,
+        apply: applyLimit,
+      };
+    case "concurrent":
+      return {
+        value: () => concurrentInput.value,
+        store: (next) => (concurrentInput.value = next),
+        min: 1,
+        max: maxConcurrentDownloads,
+        step: 1,
+        apply: applyConcurrent,
+      };
+    case "minSplit":
+      return {
+        value: () => minSplitInput.value,
+        store: (next) => (minSplitInput.value = next),
+        min: minSplitMib,
+        max: maxSplitMib,
+        step: 1,
+        apply: applyMinSplit,
+      };
+    case "uploadChunk":
+      return {
+        value: () => uploadChunkInput.value,
+        store: (next) => (uploadChunkInput.value = next),
+        min: minUploadChunkMib,
+        max: maxUploadChunkMib,
+        step: 1,
+        apply: applyUploadChunk,
+      };
+    case "uploadConcurrent":
+      return {
+        value: () => uploadConcurrentInput.value,
+        store: (next) => (uploadConcurrentInput.value = next),
+        min: minUploadConcurrency,
+        max: maxUploadConcurrency,
+        step: 1,
+        apply: applyUploadConcurrent,
+      };
+    case "uploadPartConcurrent":
+      return {
+        value: () => uploadPartConcurrentInput.value,
+        store: (next) => (uploadPartConcurrentInput.value = next),
+        min: minUploadPartConcurrency,
+        max: maxUploadPartConcurrency,
+        step: 1,
+        apply: applyUploadPartConcurrent,
+      };
+  }
+}
+
+// 输入框右侧的悬浮箭头：按各字段自己的步进值加减，再走一遍原有的钳制与保存逻辑。
+// 返回是否真的移动了（到边界时停下，按住不放不会持续写配置）。
+function bump(field: StepperField, direction: 1 | -1, steps = 1): boolean {
+  const config = stepConfig(field);
+  const clamp = (value: number, min: number, max: number) =>
+    Math.min(Math.max(value, min), max);
+  const current = clamp(Number(config.value()) || config.min, config.min, config.max);
+  const next = clamp(current + direction * config.step * steps, config.min, config.max);
+  const changed = next !== config.value();
+  config.store(next);
+  config.apply();
+  return changed;
+}
+
+let holdDelay: number | undefined;
+let holdTimer: number | undefined;
+let releaseHold: (() => void) | undefined;
+
+function stopHold() {
+  if (holdDelay !== undefined) {
+    window.clearTimeout(holdDelay);
+    holdDelay = undefined;
+  }
+  if (holdTimer !== undefined) {
+    window.clearInterval(holdTimer);
+    holdTimer = undefined;
+  }
+  releaseHold?.();
+  releaseHold = undefined;
+}
+
+// 按住箭头连续加减：按下立即走一步，停留 420ms 后每 110ms 走一步，到边界自动停。
+function beginHold(field: StepperField, direction: 1 | -1) {
+  stopHold();
+  holdDelay = window.setTimeout(() => {
+    holdDelay = undefined;
+    holdTimer = window.setInterval(() => {
+      if (!bump(field, direction)) stopHold();
+    }, 110);
+  }, 420);
+  const release = () => stopHold();
+  window.addEventListener("pointerup", release, { once: true });
+  window.addEventListener("pointercancel", release, { once: true });
+  releaseHold = () => {
+    window.removeEventListener("pointerup", release);
+    window.removeEventListener("pointercancel", release);
+  };
+}
+
+// 鼠标/触屏按下时先走一步；随后那次 click 的 detail 为 1，忽略它，避免一次按下走两步。
+function pressStep(field: StepperField, direction: 1 | -1) {
+  bump(field, direction);
+  beginHold(field, direction);
+}
+
+// 键盘（Enter/空格、按住连发）触发的 click 的 detail 为 0，在这里走一步。
+function clickStep(event: MouseEvent, field: StepperField, direction: 1 | -1) {
+  if (event.detail > 0) return;
+  bump(field, direction);
+}
+
+onBeforeUnmount(stopHold);
+
 const bytes = (n: number) => {
   if (!n) return "0 B";
   const units = ["B", "KiB", "MiB", "GiB"];
@@ -327,17 +468,43 @@ function openRepository() {
           <small>0 表示不限制带宽</small>
         </div>
         <div class="row-actions">
-          <input
-            v-model.number="limitInput"
-            class="number-input"
-            type="number"
-            min="0"
-            :max="maxLimitMib"
-            step="0.5"
-            aria-label="全局下载限速（MiB/s）"
-            @change="applyLimit"
-            @keydown.enter="applyLimit"
-          />
+          <span class="number-field">
+            <input
+              v-model.number="limitInput"
+              class="number-input"
+              type="number"
+              min="0"
+              :max="maxLimitMib"
+              step="0.5"
+              aria-label="全局下载限速（MiB/s）"
+              @change="applyLimit"
+              @keydown.enter="applyLimit"
+              @keydown.page-up.prevent="bump('limit', 1, 5)"
+              @keydown.page-down.prevent="bump('limit', -1, 5)"
+            />
+            <span class="number-stepper">
+              <button
+                type="button"
+                :disabled="saving"
+                aria-label="增加全局限速"
+                @pointerdown="pressStep('limit', 1)"
+                @pointerleave="stopHold"
+                @click="clickStep($event, 'limit', 1)"
+              >
+                <ChevronUp :size="10" :stroke-width="2.4" />
+              </button>
+              <button
+                type="button"
+                :disabled="saving"
+                aria-label="减少全局限速"
+                @pointerdown="pressStep('limit', -1)"
+                @pointerleave="stopHold"
+                @click="clickStep($event, 'limit', -1)"
+              >
+                <ChevronDown :size="10" :stroke-width="2.4" />
+              </button>
+            </span>
+          </span>
           <span class="unit">MiB/s</span>
         </div>
       </div>
@@ -360,17 +527,43 @@ function openRepository() {
           <small>同时进行的任务数量（1–{{ maxConcurrentDownloads }}）</small>
         </div>
         <div class="row-actions">
-          <input
-            v-model.number="concurrentInput"
-            class="number-input"
-            type="number"
-            min="1"
-            :max="maxConcurrentDownloads"
-            step="1"
-            aria-label="同时下载的任务数量"
-            @change="applyConcurrent"
-            @keydown.enter="applyConcurrent"
-          />
+          <span class="number-field">
+            <input
+              v-model.number="concurrentInput"
+              class="number-input"
+              type="number"
+              min="1"
+              :max="maxConcurrentDownloads"
+              step="1"
+              aria-label="同时下载的任务数量"
+              @change="applyConcurrent"
+              @keydown.enter="applyConcurrent"
+              @keydown.page-up.prevent="bump('concurrent', 1, 5)"
+              @keydown.page-down.prevent="bump('concurrent', -1, 5)"
+            />
+            <span class="number-stepper">
+              <button
+                type="button"
+                :disabled="saving"
+                aria-label="增加同时下载数"
+                @pointerdown="pressStep('concurrent', 1)"
+                @pointerleave="stopHold"
+                @click="clickStep($event, 'concurrent', 1)"
+              >
+                <ChevronUp :size="10" :stroke-width="2.4" />
+              </button>
+              <button
+                type="button"
+                :disabled="saving"
+                aria-label="减少同时下载数"
+                @pointerdown="pressStep('concurrent', -1)"
+                @pointerleave="stopHold"
+                @click="clickStep($event, 'concurrent', -1)"
+              >
+                <ChevronDown :size="10" :stroke-width="2.4" />
+              </button>
+            </span>
+          </span>
           <span class="unit">个</span>
         </div>
       </div>
@@ -402,17 +595,43 @@ function openRepository() {
           >
         </div>
         <div class="row-actions">
-          <input
-            v-model.number="minSplitInput"
-            class="number-input"
-            type="number"
-            :min="minSplitMib"
-            :max="maxSplitMib"
-            step="1"
-            aria-label="最小分段大小（MiB）"
-            @change="applyMinSplit"
-            @keydown.enter="applyMinSplit"
-          />
+          <span class="number-field">
+            <input
+              v-model.number="minSplitInput"
+              class="number-input"
+              type="number"
+              :min="minSplitMib"
+              :max="maxSplitMib"
+              step="1"
+              aria-label="最小分段大小（MiB）"
+              @change="applyMinSplit"
+              @keydown.enter="applyMinSplit"
+              @keydown.page-up.prevent="bump('minSplit', 1, 5)"
+              @keydown.page-down.prevent="bump('minSplit', -1, 5)"
+            />
+            <span class="number-stepper">
+              <button
+                type="button"
+                :disabled="saving"
+                aria-label="增加最小分段大小"
+                @pointerdown="pressStep('minSplit', 1)"
+                @pointerleave="stopHold"
+                @click="clickStep($event, 'minSplit', 1)"
+              >
+                <ChevronUp :size="10" :stroke-width="2.4" />
+              </button>
+              <button
+                type="button"
+                :disabled="saving"
+                aria-label="减少最小分段大小"
+                @pointerdown="pressStep('minSplit', -1)"
+                @pointerleave="stopHold"
+                @click="clickStep($event, 'minSplit', -1)"
+              >
+                <ChevronDown :size="10" :stroke-width="2.4" />
+              </button>
+            </span>
+          </span>
           <span class="unit">MiB</span>
         </div>
       </div>
@@ -428,17 +647,43 @@ function openRepository() {
           </small>
         </div>
         <div class="row-actions">
-          <input
-            v-model.number="uploadChunkInput"
-            class="number-input"
-            type="number"
-            :min="minUploadChunkMib"
-            :max="maxUploadChunkMib"
-            step="1"
-            aria-label="上传分片大小（MiB）"
-            @change="applyUploadChunk"
-            @keydown.enter="applyUploadChunk"
-          />
+          <span class="number-field">
+            <input
+              v-model.number="uploadChunkInput"
+              class="number-input"
+              type="number"
+              :min="minUploadChunkMib"
+              :max="maxUploadChunkMib"
+              step="1"
+              aria-label="上传分片大小（MiB）"
+              @change="applyUploadChunk"
+              @keydown.enter="applyUploadChunk"
+              @keydown.page-up.prevent="bump('uploadChunk', 1, 5)"
+              @keydown.page-down.prevent="bump('uploadChunk', -1, 5)"
+            />
+            <span class="number-stepper">
+              <button
+                type="button"
+                :disabled="saving"
+                aria-label="增加上传分片大小"
+                @pointerdown="pressStep('uploadChunk', 1)"
+                @pointerleave="stopHold"
+                @click="clickStep($event, 'uploadChunk', 1)"
+              >
+                <ChevronUp :size="10" :stroke-width="2.4" />
+              </button>
+              <button
+                type="button"
+                :disabled="saving"
+                aria-label="减少上传分片大小"
+                @pointerdown="pressStep('uploadChunk', -1)"
+                @pointerleave="stopHold"
+                @click="clickStep($event, 'uploadChunk', -1)"
+              >
+                <ChevronDown :size="10" :stroke-width="2.4" />
+              </button>
+            </span>
+          </span>
           <span class="unit">MiB</span>
         </div>
       </div>
@@ -465,17 +710,43 @@ function openRepository() {
           >
         </div>
         <div class="row-actions">
-          <input
-            v-model.number="uploadConcurrentInput"
-            class="number-input"
-            type="number"
-            :min="minUploadConcurrency"
-            :max="maxUploadConcurrency"
-            step="1"
-            aria-label="同时上传的任务数量"
-            @change="applyUploadConcurrent"
-            @keydown.enter="applyUploadConcurrent"
-          />
+          <span class="number-field">
+            <input
+              v-model.number="uploadConcurrentInput"
+              class="number-input"
+              type="number"
+              :min="minUploadConcurrency"
+              :max="maxUploadConcurrency"
+              step="1"
+              aria-label="同时上传的任务数量"
+              @change="applyUploadConcurrent"
+              @keydown.enter="applyUploadConcurrent"
+              @keydown.page-up.prevent="bump('uploadConcurrent', 1, 5)"
+              @keydown.page-down.prevent="bump('uploadConcurrent', -1, 5)"
+            />
+            <span class="number-stepper">
+              <button
+                type="button"
+                :disabled="saving"
+                aria-label="增加同时上传数"
+                @pointerdown="pressStep('uploadConcurrent', 1)"
+                @pointerleave="stopHold"
+                @click="clickStep($event, 'uploadConcurrent', 1)"
+              >
+                <ChevronUp :size="10" :stroke-width="2.4" />
+              </button>
+              <button
+                type="button"
+                :disabled="saving"
+                aria-label="减少同时上传数"
+                @pointerdown="pressStep('uploadConcurrent', -1)"
+                @pointerleave="stopHold"
+                @click="clickStep($event, 'uploadConcurrent', -1)"
+              >
+                <ChevronDown :size="10" :stroke-width="2.4" />
+              </button>
+            </span>
+          </span>
           <span class="unit">个</span>
         </div>
       </div>
@@ -490,17 +761,43 @@ function openRepository() {
           >
         </div>
         <div class="row-actions">
-          <input
-            v-model.number="uploadPartConcurrentInput"
-            class="number-input"
-            type="number"
-            :min="minUploadPartConcurrency"
-            :max="maxUploadPartConcurrency"
-            step="1"
-            aria-label="单文件分片并发"
-            @change="applyUploadPartConcurrent"
-            @keydown.enter="applyUploadPartConcurrent"
-          />
+          <span class="number-field">
+            <input
+              v-model.number="uploadPartConcurrentInput"
+              class="number-input"
+              type="number"
+              :min="minUploadPartConcurrency"
+              :max="maxUploadPartConcurrency"
+              step="1"
+              aria-label="单文件分片并发"
+              @change="applyUploadPartConcurrent"
+              @keydown.enter="applyUploadPartConcurrent"
+              @keydown.page-up.prevent="bump('uploadPartConcurrent', 1, 5)"
+              @keydown.page-down.prevent="bump('uploadPartConcurrent', -1, 5)"
+            />
+            <span class="number-stepper">
+              <button
+                type="button"
+                :disabled="saving"
+                aria-label="增加单文件分片并发"
+                @pointerdown="pressStep('uploadPartConcurrent', 1)"
+                @pointerleave="stopHold"
+                @click="clickStep($event, 'uploadPartConcurrent', 1)"
+              >
+                <ChevronUp :size="10" :stroke-width="2.4" />
+              </button>
+              <button
+                type="button"
+                :disabled="saving"
+                aria-label="减少单文件分片并发"
+                @pointerdown="pressStep('uploadPartConcurrent', -1)"
+                @pointerleave="stopHold"
+                @click="clickStep($event, 'uploadPartConcurrent', -1)"
+              >
+                <ChevronDown :size="10" :stroke-width="2.4" />
+              </button>
+            </span>
+          </span>
           <span class="unit">个</span>
         </div>
       </div>
@@ -737,7 +1034,54 @@ function openRepository() {
   border: 1px solid var(--line);
   border-radius: 9px;
   background: var(--surface);
-  text-align: right;
+  text-align: center;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.number-input::-webkit-outer-spin-button,
+.number-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.number-field {
+  position: relative;
+  display: inline-flex;
+}
+.number-stepper {
+  position: absolute;
+  top: 4px;
+  right: 5px;
+  bottom: 4px;
+  display: flex;
+  flex-direction: column;
+  width: 16px;
+}
+.number-stepper button {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  opacity: 0.5;
+  cursor: pointer;
+}
+.number-stepper button:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+  opacity: 1;
+}
+.number-stepper button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  opacity: 1;
+}
+.number-stepper button:disabled {
+  opacity: 0.25;
+  cursor: default;
+  background: transparent;
 }
 .unit {
   color: var(--muted);
