@@ -27,12 +27,12 @@
 
 ## 下载
 
-最新版本 **0.6.5**：文件管理器式「我的网盘」持续完善——批量操作并入列表头，选中态与普通表头保持同尺寸同底色；列头支持点击「文件名称 / 大小 / 修改时间」切换排序；并保留行悬浮操作、排序与筛选、列表 / 网格视图、文件夹上传（保留目录结构）、迅雷新建文件夹，以及下载文件夹后台解析。
+最新版本 **0.6.6**：补齐「我的网盘」预留能力——百度、迅雷、夸克支持重命名与删除，夸克新增上传、新建文件夹与创建分享，迅雷新增创建分享；上传内核重做为实时进度 + 同名自动序号 + 迅雷/夸克大文件分片断点续传，并支持配置分片大小与上传并发。
 
 | Windows 安装版 · 推荐                 | 便携版                                 |
 | :------------------------------------ | :------------------------------------- |
 | 自动创建快捷方式，适合日常使用。      | 解压即可运行，保留完整目录结构。       |
-| **[↓ 下载 v0.6.5 安装包][installer]** | **[↓ 下载 v0.6.5 便携 ZIP][portable]** |
+| **[↓ 下载 v0.6.6 安装包][installer]** | **[↓ 下载 v0.6.6 便携 ZIP][portable]** |
 
 [全部版本与更新说明][releases] · [SHA-256 校验文件][checksums]
 
@@ -63,19 +63,19 @@
 | **九个网盘**            | 浏览个人文件、解析分享、进入子文件夹、选择文件或文件夹下载。     |
 | **多连接与续传**        | HTTP / HTTPS 最多 16 路连接，支持分段检测、暂停、继续与重试。    |
 | **BT 磁力与种子**       | 支持 v1 / 混合种子、选文件下载、节点数设置、上传限速和可选做种。 |
-| **上传与分享**          | 百度 / 迅雷分片上传、新建文件夹；上传文件夹保留原目录结构；百度创建分享；支持拖放文件。 |
+| **上传与分享**          | 百度 / 夸克 / 迅雷分片上传与断点续传、新建文件夹、创建分享与重命名删除；文件夹上传保留原目录结构；支持拖放。 |
 | **日间 / Night 双主题** | 右上角一键切换并记住选择；关闭窗口后可在托盘继续下载。           |
-| **设置中心**            | 下载目录、全局限速、同时下载数与默认连接数，改动即时生效。       |
+| **设置中心**            | 下载目录、全局限速（MiB/s）、同时下载数、默认连接数与最小分段大小；上传分片大小与并发，改动即时生效。 |
 | **应用内自动更新**      | 启动时检查新版本，下载签名校验通过的安装包并自动重启完成升级。   |
 | **按需清理本地文件**    | 删除任务时自行选择是否删除本地文件，默认保留。                   |
 
 ## 支持的网盘
 
-| 网盘         | 分享下载 | 个人文件下载 | 上传 / 创建分享 |
-| :----------- | :------: | :----------: | :-------------: |
-| 夸克网盘     |    ✓     |      ✓       |        —        |
-| 百度网盘     |    ✓     |      ✓       |   ✓（上传/分享）  |
-| 迅雷网盘     |    ✓     |      ✓       |   ✓（上传/新建）  |
+| 网盘         | 分享下载 | 个人文件下载 | 上传 / 新建 / 分享 / 重命名·删除 |
+| :----------- | :------: | :----------: | :------------------------------: |
+| 夸克网盘     |    ✓     |      ✓       |                ✓                 |
+| 百度网盘     |    ✓     |      ✓       |                ✓                 |
+| 迅雷网盘     |    ✓     |      ✓       |                ✓                 |
 | 115 网盘     |    ✓     |      ✓       |        —        |
 | 123 云盘     |    ✓     |      ✓       |        —        |
 | 139 云盘     |    ✓     |      ✓       |        —        |
@@ -138,7 +138,7 @@ npm run tauri dev -- --no-watch
 
 ## 文档与致谢
 
-[使用指南](docs/usage.md) · [开发文档](docs/development.md) · [验证记录](VERIFICATION.md) · [更新说明](docs/release-0.6.5.md) · [第三方许可](third-party/notices/)
+[使用指南](docs/usage.md) · [开发文档](docs/development.md) · [验证记录](VERIFICATION.md) · [更新说明](docs/release-0.6.6.md) · [第三方许可](third-party/notices/)
 
 界面布局与蓝白配色参考 [Motrix](https://github.com/agalwood/Motrix)，保留本项目的统一下载入口与多网盘工作区。
 
@@ -146,7 +146,7 @@ npm run tauri dev -- --no-watch
 
 <p align="center"><sub>sixunited · 作者 <a href="https://github.com/sclliang">sclliang</a></sub></p>
 
-[installer]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.5/CloudDownloader_0.6.5_x64-setup.exe
-[portable]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.5/CloudDownloader-0.6.5-win-x64.zip
-[checksums]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.5/SHA256SUMS-0.6.5.txt
+[installer]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.6/CloudDownloader_0.6.6_x64-setup.exe
+[portable]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.6/CloudDownloader-0.6.6-win-x64.zip
+[checksums]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.6/SHA256SUMS-0.6.6.txt
 [releases]: https://github.com/clover-us/CloudDownloader/releases
