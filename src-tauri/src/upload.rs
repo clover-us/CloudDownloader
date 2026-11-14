@@ -51,6 +51,15 @@ pub struct UploadRecord {
     pub provider: Provider,
     #[serde(default)]
     pub parent_id: String,
+    /// 分片大小（字节）。 表示未启用分片。
+    #[serde(default)]
+    pub part_size: u64,
+    /// 已上传分片的 ETag，与 done 一一对应。
+    #[serde(default)]
+    pub part_etags: Vec<String>,
+    /// 分片续传所需的服务端会话信息（迅雷/夸克 OSS 会话），空表示无。
+    #[serde(default)]
+    pub session: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -75,7 +84,7 @@ impl From<UploadRecord> for UploadView {
     fn from(t: UploadRecord) -> Self {
         Self {
             completed_parts: t.done.iter().filter(|v| **v).count(),
-            total_parts: t.hashes.len(),
+            total_parts: t.done.len().max(t.hashes.len()),
             id: t.id,
             name: t.name,
             local_path: t.local_path,
@@ -166,6 +175,172 @@ fn confirmed_size(t: &UploadRecord) -> u64 {
         .map(|(i, _)| t.size.saturating_sub(i as u64 * BLOCK_SIZE).min(BLOCK_SIZE))
         .sum()
 }
+
+/// 增量 SHA1，用于计算分片上传的中间态（夸克 x-oss-hash-ctx）。
+struct Sha1State {
+    h: [u32; 5],
+    buf: [u8; 64],
+    buf_len: usize,
+    total: u64,
+}
+
+impl Sha1State {
+    fn new() -> Self {
+        Self {
+            h: [
+                0x6745_2301,
+                0xEFCD_AB89,
+                0x98BA_DCFE,
+                0x1032_5476,
+                0xC3D2_E1F0,
+            ],
+            buf: [0u8; 64],
+            buf_len: 0,
+            total: 0,
+        }
+    }
+    fn compress(h: &mut [u32; 5], block: &[u8]) {
+        let mut w = [0u32; 80];
+        for i in 0..16 {
+            w[i] = u32::from_be_bytes([
+                block[i * 4],
+                block[i * 4 + 1],
+                block[i * 4 + 2],
+                block[i * 4 + 3],
+            ]);
+        }
+        for i in 16..80 {
+            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+        }
+        let (mut a, mut b, mut c, mut d, mut e) = (h[0], h[1], h[2], h[3], h[4]);
+        for (i, word) in w.iter().enumerate() {
+            let (f, k) = if i < 20 {
+                ((b & c) | ((!b) & d), 0x5A82_7999u32)
+            } else if i < 40 {
+                (b ^ c ^ d, 0x6ED9_EBA1)
+            } else if i < 60 {
+                ((b & c) | (b & d) | (c & d), 0x8F1B_BCDC)
+            } else {
+                (b ^ c ^ d, 0xCA62_C1D6)
+            };
+            let tmp = a
+                .rotate_left(5)
+                .wrapping_add(f)
+                .wrapping_add(e)
+                .wrapping_add(k)
+                .wrapping_add(*word);
+            e = d;
+            d = c;
+            c = b.rotate_left(30);
+            b = a;
+            a = tmp;
+        }
+        h[0] = h[0].wrapping_add(a);
+        h[1] = h[1].wrapping_add(b);
+        h[2] = h[2].wrapping_add(c);
+        h[3] = h[3].wrapping_add(d);
+        h[4] = h[4].wrapping_add(e);
+    }
+    fn update(&mut self, mut data: &[u8]) {
+        self.total += data.len() as u64;
+        while !data.is_empty() {
+            let take = (64 - self.buf_len).min(data.len());
+            self.buf[self.buf_len..self.buf_len + take].copy_from_slice(&data[..take]);
+            self.buf_len += take;
+            data = &data[take..];
+            if self.buf_len == 64 {
+                let block = self.buf;
+                Self::compress(&mut self.h, &block);
+                self.buf_len = 0;
+            }
+        }
+    }
+    fn midstate(&self) -> [u32; 5] {
+        self.h
+    }
+    fn finalize(mut self) -> [u8; 20] {
+        let bit_len = self.total.wrapping_mul(8);
+        let mut pad = vec![0x80u8];
+        while (self.buf_len + pad.len()) % 64 != 56 {
+            pad.push(0);
+        }
+        pad.extend_from_slice(&bit_len.to_be_bytes());
+        let saved = self.total;
+        self.update(&pad);
+        self.total = saved;
+        let mut out = [0u8; 20];
+        for (i, word) in self.h.iter().enumerate() {
+            out[i * 4..i * 4 + 4].copy_from_slice(&word.to_be_bytes());
+        }
+        out
+    }
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(out, "{b:02x}");
+    }
+    out
+}
+
+/// 计算整文件md5、sha1，以及每个分片起始位置的 SHA1 中间态（夸克分片用）。
+fn hash_with_states(
+    path: &Path,
+    part_size: u64,
+) -> Result<(String, String, Vec<[u32; 5]>), String> {
+    if part_size == 0 {
+        return Err("分片大小无效".into());
+    }
+    let mut file = std::fs::File::open(path).map_err(|_| "读取上传文件失败")?;
+    let mut md5 = Md5::new();
+    let mut sha1 = Sha1State::new();
+    let mut states: Vec<[u32; 5]> = vec![sha1.midstate()];
+    let mut buffer = vec![0u8; 1024 * 1024];
+    let mut processed: u64 = 0;
+    let mut next_boundary = part_size;
+    loop {
+        let n = file.read(&mut buffer).map_err(|_| "读取上传文件失败")?;
+        if n == 0 {
+            break;
+        }
+        md5.update(&buffer[..n]);
+        let mut start = 0usize;
+        while start < n {
+            let remain = (next_boundary - processed) as usize;
+            let take = remain.min(n - start);
+            sha1.update(&buffer[start..start + take]);
+            processed += take as u64;
+            start += take;
+            if processed == next_boundary {
+                states.push(sha1.midstate());
+                next_boundary += part_size;
+            }
+        }
+    }
+    let sha1_hex = hex_digest(&sha1.finalize());
+    Ok((format!("{:x}", md5.finalize()), sha1_hex, states))
+}
+
+/// 把分片中间态编码为夸克 OSS 需要的 x-oss-hash-ctx（base64 JSON）。
+fn encode_hash_ctx(state: &[u32; 5], processed_bytes: u64) -> String {
+    use base64::Engine as _;
+    let body = serde_json::json!({
+        "hash_type": "sha1",
+        "h0": state[0].to_string(),
+        "h1": state[1].to_string(),
+        "h2": state[2].to_string(),
+        "h3": state[3].to_string(),
+        "h4": state[4].to_string(),
+        "Nl": processed_bytes.wrapping_mul(8).to_string(),
+        "Nh": "0",
+        "data": "",
+        "num": "0",
+    });
+    base64::engine::general_purpose::STANDARD.encode(body.to_string().as_bytes())
+}
+
 fn save(app: &tauri::AppHandle, task: &UploadRecord) -> Result<(), String> {
     app.state::<AppState>()
         .store
@@ -233,6 +408,7 @@ fn finish_state(app: &tauri::AppHandle, id: &str, result: Result<(), String>) {
                     latest.upload_id.clear();
                     latest.done.fill(false);
                     latest.completed = 0;
+                    latest.session = serde_json::Value::Null;
                 }
                 latest.speed = 0;
                 let _ = store.save_upload(&latest);
@@ -342,6 +518,16 @@ async fn run_upload(
     Ok(())
 }
 
+/// 大文件分片大小（迅雷/夸克续传）。
+const MULTIPART_SIZE: u64 = 8 * 1024 * 1024;
+
+fn sum_done(total: u64, part_size: u64, done: &[bool]) -> u64 {
+    (0..done.len())
+        .filter(|i| done[*i])
+        .map(|i| total.saturating_sub(i as u64 * part_size).min(part_size))
+        .sum()
+}
+
 async fn run_upload_xunlei(
     app: &tauri::AppHandle,
     t: &mut UploadRecord,
@@ -365,33 +551,269 @@ async fn run_upload_xunlei(
             .await
             .map_err(|_| "文件校验任务失败")??;
     check_local(t)?;
-    t.status = "active".into();
-    t.completed = 0;
-    save(app, t)?;
+    let total = t.size;
     let local = t.local_path.clone();
     let parent_id = t.parent_id.clone();
     let name = t.name.clone();
     let remote_path = t.remote_path.clone();
-    let total = t.size;
-    let progress = Arc::new(AtomicU64::new(0));
+
+    // 小文件：整对象单 PUT。
+    if total <= MULTIPART_SIZE {
+        t.status = "active".into();
+        t.completed = 0;
+        save(app, t)?;
+        let (file_id, params) = session
+            .xunlei_begin_upload(&parent_id, &name, total, &gcid)
+            .await?;
+        let progress = Arc::new(AtomicU64::new(0));
+        let started = Instant::now();
+        pump_single(
+            app,
+            t,
+            session.xunlei_put_object(&params, Path::new(&local), total, &progress),
+            &progress,
+            total,
+            started,
+        )
+        .await?;
+        let id = if file_id.is_empty() {
+            session
+                .xunlei_find(&remote_path)
+                .await?
+                .map(|f| f.id)
+                .unwrap_or_default()
+        } else {
+            file_id
+        };
+        t.remote_file = Some(DriveFile {
+            id,
+            path: remote_path,
+            name,
+            size: total,
+            is_dir: false,
+            modified: now(),
+            created: now(),
+            md5: gcid.clone(),
+        });
+        t.status = "complete".into();
+        t.completed = total;
+        t.session = serde_json::Value::Null;
+        save(app, t)?;
+        return Ok(());
+    }
+
+    // 大文件：分片 + 断点续传。
+    let part_size = MULTIPART_SIZE;
+    if t.session.get("params").is_none() || t.session.get("file_id").is_none() {
+        let (file_id, params) = session
+            .xunlei_begin_upload(&parent_id, &name, total, &gcid)
+            .await?;
+        let parts = total.div_ceil(part_size) as usize;
+        t.session = serde_json::json!({ "file_id": file_id, "params": params, "upload_id": "" });
+        t.part_size = part_size;
+        t.done = vec![false; parts];
+        t.part_etags = vec![String::new(); parts];
+        t.hashes = vec![String::new(); parts];
+        t.completed = 0;
+        save(app, t)?;
+    }
+    let params = t.session["params"].clone();
+    let file_id = t.session["file_id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let mut upload_id = t.session["upload_id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    if upload_id.is_empty() {
+        upload_id = session.xunlei_oss_initiate(&params).await?;
+        t.session["upload_id"] = serde_json::json!(upload_id);
+        save(app, t)?;
+    }
+    let parts = t.done.len();
+    t.status = "active".into();
+    t.completed = sum_done(total, part_size, &t.done);
+    save(app, t)?;
     let started = Instant::now();
-    let upload = session.xunlei_upload(
-        Path::new(&local),
-        &parent_id,
-        &name,
-        &remote_path,
-        total,
-        &stop,
-        &progress,
-    );
-    tokio::pin!(upload);
+
+    let mut multipart_err: Option<String> = None;
+    for i in 0..parts {
+        if stop.load(Ordering::Relaxed) {
+            return Err("__paused".into());
+        }
+        if t.done[i] {
+            continue;
+        }
+        let offset = i as u64 * part_size;
+        let len = (total - offset).min(part_size);
+        let progress = Arc::new(AtomicU64::new(0));
+        let put = session.xunlei_oss_put_part(
+            &params,
+            &upload_id,
+            (i + 1) as u32,
+            Path::new(&local),
+            offset,
+            len,
+            &progress,
+        );
+        let baseline = sum_done(total, part_size, &t.done);
+        match pump_part(app, t, put, &progress, baseline, baseline + len).await {
+            Ok(etag) => {
+                t.part_etags[i] = etag;
+                t.done[i] = true;
+                t.completed = sum_done(total, part_size, &t.done);
+                t.speed = (t.completed as f64 / started.elapsed().as_secs_f64().max(0.001)) as u64;
+                save(app, t)?;
+            }
+            Err(e) => {
+                multipart_err = Some(e);
+                break;
+            }
+        }
+    }
+
+    let id = if multipart_err.is_none() {
+        let pairs: Vec<(u32, String)> = (0..parts)
+            .map(|i| ((i + 1) as u32, t.part_etags[i].clone()))
+            .collect();
+        match session
+            .xunlei_oss_complete(&params, &upload_id, &pairs)
+            .await
+        {
+            Ok(()) => {
+                if file_id.is_empty() {
+                    session
+                        .xunlei_find(&remote_path)
+                        .await?
+                        .map(|f| f.id)
+                        .unwrap_or_default()
+                } else {
+                    file_id.clone()
+                }
+            }
+            Err(e) => {
+                multipart_err = Some(e);
+                String::new()
+            }
+        }
+    } else {
+        String::new()
+    };
+
+    if let Some(err) = multipart_err {
+        // 分片失败：回退为整对象单PUT（覆盖已上传的分片）。
+        t.status = "active".into();
+        t.completed = 0;
+        t.done.iter_mut().for_each(|v| *v = false);
+        t.part_etags.iter_mut().for_each(|v| v.clear());
+        save(app, t)?;
+        let progress = Arc::new(AtomicU64::new(0));
+        let started2 = Instant::now();
+        pump_single(
+            app,
+            t,
+            session.xunlei_put_object(&params, Path::new(&local), total, &progress),
+            &progress,
+            total,
+            started2,
+        )
+        .await
+        .map_err(|e| format!("{err}；回退整文件上传失败：{e}"))?;
+        let id = if file_id.is_empty() {
+            session
+                .xunlei_find(&remote_path)
+                .await?
+                .map(|f| f.id)
+                .unwrap_or_default()
+        } else {
+            file_id
+        };
+        t.remote_file = Some(DriveFile {
+            id,
+            path: remote_path,
+            name,
+            size: total,
+            is_dir: false,
+            modified: now(),
+            created: now(),
+            md5: gcid.clone(),
+        });
+        t.status = "complete".into();
+        t.completed = total;
+        t.session = serde_json::Value::Null;
+        save(app, t)?;
+        return Ok(());
+    }
+
+    t.remote_file = Some(DriveFile {
+        id,
+        path: remote_path,
+        name,
+        size: total,
+        is_dir: false,
+        modified: now(),
+        created: now(),
+        md5: gcid,
+    });
+    t.status = "complete".into();
+    t.completed = total;
+    t.session = serde_json::Value::Null;
+    save(app, t)?;
+    Ok(())
+}
+
+/// 单次整对象上传：带进度轮询地等待完成。
+async fn pump_single<F>(
+    app: &tauri::AppHandle,
+    t: &mut UploadRecord,
+    fut: F,
+    progress: &Arc<AtomicU64>,
+    total: u64,
+    started: Instant,
+) -> Result<(), String>
+where
+    F: std::future::Future<Output = Result<(), String>>,
+{
+    tokio::pin!(fut);
     let mut ticker = tokio::time::interval(Duration::from_millis(300));
-    let mut last = 0u64;
-    let remote = loop {
+    loop {
         tokio::select! {
-            result = &mut upload => break result?,
+            result = &mut fut => break result?,
             _ = ticker.tick() => {
                 let done = progress.load(Ordering::Relaxed).min(total);
+                if done > t.completed {
+                    t.completed = done;
+                    let elapsed = started.elapsed().as_secs_f64().max(0.001);
+                    t.speed = (done as f64 / elapsed) as u64;
+                    save(app, t)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 单个分片上传：带进度轮询地等待完成，返回 ETag。
+async fn pump_part<F>(
+    app: &tauri::AppHandle,
+    t: &mut UploadRecord,
+    fut: F,
+    progress: &Arc<AtomicU64>,
+    baseline: u64,
+    upper: u64,
+) -> Result<String, String>
+where
+    F: std::future::Future<Output = Result<String, String>>,
+{
+    tokio::pin!(fut);
+    let mut ticker = tokio::time::interval(Duration::from_millis(300));
+    let mut last = t.completed;
+    loop {
+        tokio::select! {
+            result = &mut fut => break result,
+            _ = ticker.tick() => {
+                let done = baseline + progress.load(Ordering::Relaxed).min(upper - baseline);
                 if done > t.completed {
                     t.completed = done;
                     t.speed = ((done - last) as f64 / 0.3) as u64;
@@ -400,17 +822,7 @@ async fn run_upload_xunlei(
                 }
             }
         }
-    };
-    t.speed = (total as f64 / started.elapsed().as_secs_f64().max(0.001)) as u64;
-    if remote.md5 != gcid {
-        return Err("云端文件校验值与本地不一致，请重试".into());
     }
-    t.remote_file = Some(remote);
-    t.status = "complete".into();
-    t.completed = total;
-    t.upload_id.clear();
-    save(app, t)?;
-    Ok(())
 }
 
 async fn run_upload_quark(
@@ -423,31 +835,180 @@ async fn run_upload_quark(
         return Err("夸克账号已切换，请使用创建任务时的账号继续上传".into());
     }
     check_local(t)?;
-    t.status = "uploading".into();
-    t.completed = 0;
-    save(app, t)?;
+    let total = t.size;
     let local = t.local_path.clone();
     let parent_id = t.parent_id.clone();
     let name = t.name.clone();
     let remote_path = t.remote_path.clone();
-    let total = t.size;
-    let progress = Arc::new(AtomicU64::new(0));
+
+    if total <= MULTIPART_SIZE {
+        return run_upload_quark_single(
+            app,
+            t,
+            &session,
+            &local,
+            &parent_id,
+            &name,
+            &remote_path,
+            total,
+        )
+        .await;
+    }
+
+    // 大文件：分片 + 断点续传。
+    let part_size = MULTIPART_SIZE;
+    // 每次运行都重新计算整文件 md5/sha1 与各分片 SHA1 中间态（一次顺序读文件）。
+    let (md5, sha1, states) = {
+        let path = local.clone();
+        tokio::task::spawn_blocking(move || hash_with_states(Path::new(&path), part_size))
+            .await
+            .map_err(|_| "文件校验任务失败")??
+    };
+
+    if t.session.get("task_id").is_none() {
+        let begin = session
+            .quark_upload_begin(&parent_id, &name, total, &md5, &sha1)
+            .await?;
+        let parts = total.div_ceil(part_size) as usize;
+        let mut s = begin;
+        s["name"] = serde_json::json!(name);
+        t.session = s;
+        t.part_size = part_size;
+        t.done = vec![false; parts];
+        t.part_etags = vec![String::new(); parts];
+        t.hashes = vec![String::new(); parts];
+        t.completed = 0;
+        save(app, t)?;
+    }
+    let parts = t.done.len();
+    t.status = "active".into();
+    t.completed = sum_done(total, part_size, &t.done);
+    save(app, t)?;
     let started = Instant::now();
-    let upload = session.cloud_upload(
-        Path::new(&local),
+    let sess = t.session.clone();
+
+    let mut multipart_err: Option<String> = None;
+    for i in 0..parts {
+        if stop.load(Ordering::Relaxed) {
+            return Err("__paused".into());
+        }
+        if t.done[i] {
+            continue;
+        }
+        let offset = i as u64 * part_size;
+        let len = (total - offset).min(part_size);
+        let hash_ctx = if i == 0 {
+            None
+        } else {
+            let state = states.get(i).copied().unwrap_or(states[0]);
+            Some(encode_hash_ctx(&state, offset))
+        };
+        let progress = Arc::new(AtomicU64::new(0));
+        let put = session.quark_upload_put_part(
+            &sess,
+            (i + 1) as u32,
+            hash_ctx.as_deref(),
+            Path::new(&local),
+            offset,
+            len,
+            &progress,
+        );
+        let baseline = sum_done(total, part_size, &t.done);
+        match pump_part(app, t, put, &progress, baseline, baseline + len).await {
+            Ok(etag) => {
+                t.part_etags[i] = etag;
+                t.done[i] = true;
+                t.completed = sum_done(total, part_size, &t.done);
+                t.speed = (t.completed as f64 / started.elapsed().as_secs_f64().max(0.001)) as u64;
+                save(app, t)?;
+            }
+            Err(e) => {
+                multipart_err = Some(e);
+                break;
+            }
+        }
+    }
+
+    if multipart_err.is_none() {
+        let pairs: Vec<(u32, String)> = (0..parts)
+            .map(|i| ((i + 1) as u32, t.part_etags[i].clone()))
+            .collect();
+        match session.quark_upload_complete(&t.session, &pairs).await {
+            Ok(fid) => {
+                if fid.is_empty() {
+                    return Err("夸克上传完成但未返回文件标识，请刷新网盘确认".into());
+                }
+                t.remote_file = Some(DriveFile {
+                    id: fid,
+                    path: remote_path,
+                    name,
+                    size: total,
+                    is_dir: false,
+                    modified: now(),
+                    created: now(),
+                    md5,
+                });
+                t.status = "complete".into();
+                t.completed = total;
+                t.session = serde_json::Value::Null;
+                save(app, t)?;
+                return Ok(());
+            }
+            Err(e) => multipart_err = Some(e),
+        }
+    }
+
+    // 分片失败：回退整文件单 PUT。
+    let err = multipart_err.unwrap_or_default();
+    t.session = serde_json::Value::Null;
+    t.completed = 0;
+    t.done.iter_mut().for_each(|v| *v = false);
+    run_upload_quark_single(
+        app,
+        t,
+        &session,
+        &local,
         &parent_id,
         &name,
         &remote_path,
         total,
-        &stop,
+    )
+    .await
+    .map_err(|e| format!("{err}；回退整文件上传失败：{e}"))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_upload_quark_single(
+    app: &tauri::AppHandle,
+    t: &mut UploadRecord,
+    session: &Session,
+    local: &str,
+    parent_id: &str,
+    name: &str,
+    remote_path: &str,
+    total: u64,
+) -> Result<(), String> {
+    t.status = "uploading".into();
+    t.completed = 0;
+    save(app, t)?;
+    let progress = Arc::new(AtomicU64::new(0));
+    let stop_flag = AtomicBool::new(false);
+    let started = Instant::now();
+    let upl = session.cloud_upload(
+        Path::new(local),
+        parent_id,
+        name,
+        remote_path,
+        total,
+        &stop_flag,
         &progress,
     );
-    tokio::pin!(upload);
+    tokio::pin!(upl);
     let mut ticker = tokio::time::interval(Duration::from_millis(300));
     let mut last = 0u64;
     let remote = loop {
         tokio::select! {
-            result = &mut upload => break result?,
+            result = &mut upl => break result?,
             _ = ticker.tick() => {
                 let done = progress.load(Ordering::Relaxed).min(total);
                 if done > t.completed {
@@ -466,7 +1027,7 @@ async fn run_upload_quark(
     t.remote_file = Some(remote);
     t.status = "complete".into();
     t.completed = total;
-    t.upload_id.clear();
+    t.session = serde_json::Value::Null;
     save(app, t)?;
     Ok(())
 }
@@ -523,7 +1084,7 @@ where
             Err(e) => last_error = e,
         }
     }
-    Err(format!("第 {} 个分片上传失败：{last_error}", index + 1))
+    Err(format!("第{} 个分片上传失败：{last_error}", index + 1))
 }
 
 #[cfg(test)]
@@ -560,6 +1121,9 @@ mod tests {
             confirmed_requests: 0,
             provider: Provider::Baidu,
             parent_id: String::new(),
+            part_size: 0,
+            part_etags: Vec::new(),
+            session: serde_json::Value::Null,
         };
         (PathBufGuard(path), record)
     }

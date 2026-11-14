@@ -502,6 +502,9 @@ pub async fn upload_enqueue(
             confirmed_requests: 0,
             provider,
             parent_id: parent_id.clone(),
+            part_size: 0,
+            part_etags: Vec::new(),
+            session: serde_json::Value::Null,
         });
     }
     // 目标目录已有的文件名集合，用于同名自动追加序号。

@@ -523,21 +523,14 @@ impl Session {
         Err("该迅雷分享文件需要先转存到自己的网盘才能下载，请稍后在迅雷客户端转存".into())
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub async fn xunlei_upload(
+    /// 在迅雷云盘创建上传文件条目，返回 (文件 id, OSS 直传会话参数)。
+    pub async fn xunlei_begin_upload(
         &self,
-        local_path: &Path,
         parent_id: &str,
         name: &str,
-        remote_path: &str,
         size: u64,
-        stop: &AtomicBool,
-        progress: &std::sync::Arc<std::sync::atomic::AtomicU64>,
-    ) -> Result<DriveFile, String> {
-        if stop.load(Ordering::Relaxed) {
-            return Err("已暂停".into());
-        }
-        let gcid = gcid(local_path, size, stop)?;
+        gcid: &str,
+    ) -> Result<(String, Value), String> {
         let captcha = self.captcha("POST:/drive/v1/files").await?;
         let body = json!({
             "kind": "drive#file",
@@ -553,24 +546,23 @@ impl Session {
             .and_then(|resumable| resumable.get("params"))
             .cloned()
             .ok_or("迅雷未返回上传会话信息")?;
-        self.put_object(&params, local_path, size, progress).await?;
         let file = value.get("file").cloned().unwrap_or_else(|| json!({}));
         let id = text(&file["id"]);
-        if id.is_empty() {
-            return Err("迅雷上传完成但未返回文件标识，请刷新网盘确认".into());
-        }
-        Ok(DriveFile {
-            id,
-            path: remote_path.into(),
-            name: name.into(),
-            size,
-            is_dir: false,
-            modified: now(),
-            created: now(),
-            md5: gcid,
-        })
+        Ok((id, params))
     }
 
+    /// 单次整对象直传（大文件分片失败时的回退路径）。
+    pub async fn xunlei_put_object(
+        &self,
+        params: &Value,
+        path: &Path,
+        size: u64,
+        progress: &std::sync::Arc<std::sync::atomic::AtomicU64>,
+    ) -> Result<(), String> {
+        self.put_object(params, path, size, progress).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub async fn xunlei_mkdir(&self, parent_id: &str, name: &str) -> Result<DriveFile, String> {
         let captcha = self.captcha("POST:/drive/v1/files").await?;
         let body = json!({
@@ -784,6 +776,236 @@ impl Session {
         }
         Ok(())
     }
+
+    // ---- OSS 分片上传（大文件续传）----
+
+    fn oss_target(&self, params: &Value) -> Result<(String, String, String), String> {
+        let bucket = text(&params["bucket"]);
+        let key = text(&params["key"]);
+        let endpoint = text(&params["endpoint"]);
+        if bucket.is_empty() || key.is_empty() || endpoint.is_empty() {
+            return Err("迅雷上传会话缺少必要参数".into());
+        }
+        let base = endpoint
+            .trim_start_matches("https://")
+            .trim_start_matches("http://");
+        let base = base.trim_start_matches(&format!("{bucket}."));
+        let base = base.trim_end_matches('/');
+        Ok((bucket.clone(), key, format!("{bucket}.{base}")))
+    }
+
+    fn oss_authorization(
+        &self,
+        params: &Value,
+        method: &str,
+        content_type: &str,
+        content_md5: &str,
+        date: &str,
+        resource: &str,
+    ) -> String {
+        let access = text(&params["access_key_id"]);
+        let secret = text(&params["access_key_secret"]);
+        let security_token = text(&params["security_token"]);
+        let oss_headers = if security_token.is_empty() {
+            String::new()
+        } else {
+            format!("x-oss-security-token:{security_token}\n")
+        };
+        let string_to_sign =
+            format!("{method}\n{content_md5}\n{content_type}\n{date}\n{oss_headers}{resource}");
+        let signature = base64::engine::general_purpose::STANDARD
+            .encode(hmac_sha1(secret.as_bytes(), string_to_sign.as_bytes()));
+        format!("OSS {access}:{signature}")
+    }
+
+    pub async fn xunlei_oss_initiate(&self, params: &Value) -> Result<String, String> {
+        let (bucket, key, host) = self.oss_target(params)?;
+        let date = chrono::Utc::now()
+            .format("%a, %d %b %Y %H:%M:%S GMT")
+            .to_string();
+        let put_key = key.trim_start_matches('/');
+        let resource = format!("/{bucket}/{put_key}?uploads");
+        let authorization = self.oss_authorization(params, "POST", "", "", &date, &resource);
+        let security_token = text(&params["security_token"]);
+        let mut request = self
+            .transport
+            .client
+            .post(format!("https://{host}/{put_key}?uploads"))
+            .header("Date", &date)
+            .header("Authorization", &authorization)
+            .timeout(std::time::Duration::from_secs(120));
+        if !security_token.is_empty() {
+            request = request.header("x-oss-security-token", &security_token);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|e| format!("迅雷创建分片上传失败（{e}）"))?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "迅雷创建分片上传失败（HTTP {}）",
+                response.status().as_u16()
+            ));
+        }
+        let body = response
+            .text()
+            .await
+            .map_err(|_| "迅雷分片上传响应读取失败")?;
+        extract_xml_tag(&body, "UploadId").ok_or_else(|| "迅雷未返回分片上传标识".to_string())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn xunlei_oss_put_part(
+        &self,
+        params: &Value,
+        upload_id: &str,
+        part_number: u32,
+        path: &Path,
+        offset: u64,
+        len: u64,
+        progress: &std::sync::Arc<std::sync::atomic::AtomicU64>,
+    ) -> Result<String, String> {
+        let (bucket, key, host) = self.oss_target(params)?;
+        let put_key = key.trim_start_matches('/');
+        let date = chrono::Utc::now()
+            .format("%a, %d %b %Y %H:%M:%S GMT")
+            .to_string();
+        let content_type = "application/octet-stream";
+        let resource = format!("/{bucket}/{put_key}?partNumber={part_number}&uploadId={upload_id}");
+        let authorization =
+            self.oss_authorization(params, "PUT", content_type, "", &date, &resource);
+        let security_token = text(&params["security_token"]);
+        let counter = progress.clone();
+        let mut file = tokio::fs::File::open(path)
+            .await
+            .map_err(|_| "读取上传文件失败")?;
+        {
+            use tokio::io::AsyncSeekExt;
+            file.seek(std::io::SeekFrom::Start(offset))
+                .await
+                .map_err(|_| "定位上传文件失败")?;
+        }
+        let body_stream =
+            futures_util::stream::unfold((file, len), move |(mut file, remaining)| {
+                let counter = counter.clone();
+                async move {
+                    use tokio::io::AsyncReadExt;
+                    if remaining == 0 {
+                        return None;
+                    }
+                    let want = (256 * 1024).min(remaining as usize);
+                    let mut buf = vec![0u8; want];
+                    match file.read(&mut buf).await {
+                        Ok(0) => None,
+                        Ok(n) => {
+                            buf.truncate(n);
+                            counter.fetch_add(n as u64, Ordering::Relaxed);
+                            Some((
+                                Ok::<Vec<u8>, std::io::Error>(buf),
+                                (file, remaining - n as u64),
+                            ))
+                        }
+                        Err(e) => Some((Err(e), (file, 0))),
+                    }
+                }
+            });
+        let body = reqwest::Body::wrap_stream(body_stream);
+        let mut request = self
+            .transport
+            .client
+            .put(format!(
+                "https://{host}/{put_key}?partNumber={part_number}&uploadId={upload_id}"
+            ))
+            .header("Date", &date)
+            .header("Content-Type", content_type)
+            .header("Content-Length", len.to_string())
+            .header("Authorization", &authorization)
+            .body(body)
+            .timeout(std::time::Duration::from_secs(3600));
+        if !security_token.is_empty() {
+            request = request.header("x-oss-security-token", &security_token);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|e| format!("连接迅雷云端存储失败，请稍后重试（{e}）"))?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "迅雷分片上传失败（HTTP {}）",
+                response.status().as_u16()
+            ));
+        }
+        let etag = response
+            .headers()
+            .get("etag")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .trim_matches('"')
+            .to_string();
+        if etag.is_empty() {
+            return Err("迅雷分片上传未返回 ETag".into());
+        }
+        Ok(etag)
+    }
+
+    pub async fn xunlei_oss_complete(
+        &self,
+        params: &Value,
+        upload_id: &str,
+        parts: &[(u32, String)],
+    ) -> Result<(), String> {
+        let (bucket, key, host) = self.oss_target(params)?;
+        let put_key = key.trim_start_matches('/');
+        let date = chrono::Utc::now()
+            .format("%a, %d %b %Y %H:%M:%S GMT")
+            .to_string();
+        let mut xml = String::from("<CompleteMultipartUpload>");
+        for (number, etag) in parts {
+            xml.push_str(&format!(
+                "<Part><PartNumber>{number}</PartNumber><ETag>\"{etag}\"</ETag></Part>"
+            ));
+        }
+        xml.push_str("</CompleteMultipartUpload>");
+        let content_type = "application/xml";
+        let content_md5 =
+            base64::engine::general_purpose::STANDARD.encode(md5::Md5::digest(xml.as_bytes()));
+        let resource = format!("/{bucket}/{put_key}?uploadId={upload_id}");
+        let authorization =
+            self.oss_authorization(params, "POST", content_type, &content_md5, &date, &resource);
+        let security_token = text(&params["security_token"]);
+        let mut request = self
+            .transport
+            .client
+            .post(format!("https://{host}/{put_key}?uploadId={upload_id}"))
+            .header("Date", &date)
+            .header("Content-Type", content_type)
+            .header("Content-MD5", &content_md5)
+            .header("Authorization", &authorization)
+            .body(xml)
+            .timeout(std::time::Duration::from_secs(600));
+        if !security_token.is_empty() {
+            request = request.header("x-oss-security-token", &security_token);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|e| format!("迅雷分片合并失败，请稍后重试（{e}）"))?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "迅雷分片合并失败（HTTP {}）",
+                response.status().as_u16()
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = xml.find(&open)? + open.len();
+    let end = xml[start..].find(&close)? + start;
+    Some(xml[start..end].to_string())
 }
 
 fn identifier_component(value: &str) -> Result<&str, String> {
