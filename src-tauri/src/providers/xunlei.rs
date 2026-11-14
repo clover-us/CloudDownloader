@@ -735,14 +735,16 @@ impl Session {
             .header("Content-Type", content_type)
             .header("Content-Length", size.to_string())
             .header("Authorization", authorization)
-            .body(body);
+            .body(body)
+            // 上传大文件可能远超客户端默认的 30 秒总超时，这里按请求放宽。
+            .timeout(std::time::Duration::from_secs(3600));
         if !security_token.is_empty() {
             request = request.header("x-oss-security-token", &security_token);
         }
         let response = request
             .send()
             .await
-            .map_err(|_| "连接迅雷云端存储失败，请稍后重试")?;
+            .map_err(|e| format!("连接迅雷云端存储失败，请稍后重试（{e}）"))?;
         if !response.status().is_success() {
             return Err(format!(
                 "迅雷云端存储上传失败（HTTP {}），请稍后重试",

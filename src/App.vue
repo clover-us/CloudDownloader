@@ -654,7 +654,6 @@ onUnmounted(() => {
         @changed="refresh"
         @error="error = $event"
         @browse="
-          driveProvider = 'baidu';
           tab = 'drive';
         "
       />
@@ -665,7 +664,6 @@ onUnmounted(() => {
         @error="error = $event"
         @notice="notice"
         @browse="
-          driveProvider = 'baidu';
           tab = 'drive';
         "
       />

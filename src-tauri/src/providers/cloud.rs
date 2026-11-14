@@ -861,9 +861,11 @@ impl Session {
             .header("x-oss-user-agent", ua)
             .header("Authorization", &auth_key)
             .body(bytes)
+            // 上传大文件可能远超客户端默认的 30 秒总超时，这里按请求放宽。
+            .timeout(std::time::Duration::from_secs(3600))
             .send()
             .await
-            .map_err(|_| "连接夸克云端存储失败，请稍后重试")?;
+            .map_err(|e| format!("连接夸克云端存储失败，请稍后重试（{e}）"))?;
         if !response.status().is_success() {
             return Err(format!(
                 "夸克云端存储上传失败（HTTP {}），请稍后重试",
@@ -919,9 +921,10 @@ impl Session {
             .header("x-oss-callback", &callback_b64)
             .header("Content-MD5", &xml_md5)
             .body(xml)
+            .timeout(std::time::Duration::from_secs(600))
             .send()
             .await
-            .map_err(|_| "夸克云端合并失败，请稍后重试")?;
+            .map_err(|e| format!("夸克云端合并失败，请稍后重试（{e}）"))?;
         if !matches!(response.status().as_u16(), 200 | 203) {
             return Err(format!(
                 "夸克云端合并失败（HTTP {}），请稍后重试",

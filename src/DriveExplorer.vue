@@ -99,6 +99,18 @@ const displayTrail = computed<CrumbItem[]>(() => {
   ];
 });
 const path = ref("/");
+
+// 按网盘记住上次浏览的目录：切到其它标签页（如“上传任务”）或切换网盘再回来时恢复，
+// 而不是每次都退回根目录。用挂在 window 上的 Map 做模块级单例，组件销毁后仍保留。
+type ExplorerMemo = { path: string; trail: Trail[] };
+const explorerMemo: Map<string, ExplorerMemo> = ((
+  window as unknown as { __cdExplorerMemo?: Map<string, ExplorerMemo> }
+).__cdExplorerMemo ??= new Map<string, ExplorerMemo>());
+const savedMemo = explorerMemo.get(props.provider);
+if (savedMemo) {
+  path.value = savedMemo.path;
+  trail.value = savedMemo.trail.map((crumb) => ({ ...crumb }));
+}
 const keyword = ref("");
 const loadedKeyword = ref("");
 const sortKey = ref<"name" | "size" | "modified" | "created">("name");
@@ -380,6 +392,10 @@ function onDocumentClick(event: MouseEvent) {
   filterOpen.value = false;
 }
 onUnmounted(() => {
+  explorerMemo.set(props.provider, {
+    path: path.value,
+    trail: trail.value.map((crumb) => ({ ...crumb })),
+  });
   disposed = true;
   unlistenDrop?.();
   stopFolderPolling();
