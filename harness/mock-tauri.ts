@@ -105,7 +105,17 @@ const state = {
   } as Record<string, string>,
   calls: [] as { cmd: string; args: unknown }[],
   uploads: [] as Record<string, unknown>[],
-  handoffs: [] as { url: string; filename?: string | null; headers?: string[] }[],
+  handoffs: [] as {
+    url: string;
+    filename?: string | null;
+    headers?: string[];
+  }[],
+  lastHandoff: null as {
+    site: string;
+    ok: boolean;
+    message: string;
+    at: number;
+  } | null,
   refreshDelayMs: Number((window as any).__MOCK_SLOW__ || 0),
 };
 
@@ -117,6 +127,11 @@ const settings = {
   defaultConnections: 16,
   closeAction: "tray",
   autoCheckUpdates: true,
+  uploadChunkMib: 8,
+  uploadConcurrency: 2,
+  uploadPartConcurrency: 4,
+  minSplitMib: 1,
+  browserBridge: true,
 };
 
 const account = (p: Provider) =>
@@ -453,6 +468,13 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
   }
   // feat merge: settings + in-app updater.
   if (cmd === "settings_get") return { ...settings };
+  if (cmd === "bridge_status")
+    return {
+      listening: true,
+      port: 17890,
+      enabled: settings.browserBridge,
+      last: state.lastHandoff,
+    };
   if (cmd === "settings_set") {
     Object.assign(settings, args.settings);
     return { ...settings };
@@ -509,7 +531,10 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
   // Mirrors the backend: the link is queued before the event is emitted, so a
   // late listener still sees it through take_handoff. A plain string is the
   // clouddownloader:// form; an object is what the extension bridge delivers.
-  handoff(link: string | { url: string; filename?: string | null; headers?: string[] }) {
+  handoff(
+    link:
+      string | { url: string; filename?: string | null; headers?: string[] },
+  ) {
     state.handoffs.push(typeof link === "string" ? { url: link } : link);
     emit("handoff", null);
   },

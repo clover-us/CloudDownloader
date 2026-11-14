@@ -249,6 +249,20 @@ fn take_handoff(
         .unwrap_or_default())
 }
 
+/// 浏览器接力的现状：桥是否在监听、设置里是否关掉、最近一次请求的结果。
+#[tauri::command]
+fn bridge_status(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<bridge::BridgeStatus, String> {
+    trusted(&window)?;
+    let enabled = {
+        let store = state.store.lock().unwrap();
+        settings::Settings::load(&store).browser_bridge
+    };
+    Ok(bridge::status(enabled))
+}
+
 async fn start_task(
     app: &tauri::AppHandle,
     state: &AppState,
@@ -617,6 +631,7 @@ async fn enqueue(
             bt: None,
             upload_speed: 0,
             batch: group,
+            origin: None,
         };
         created.push(start_task(&app, &state, task, None, Some(&session)).await?);
     }
@@ -1202,6 +1217,7 @@ pub fn run() {
             settings_get,
             settings_set,
             take_handoff,
+            bridge_status,
             enqueue,
             direct_commands::enqueue_direct,
             download_commands::inspect_download,

@@ -846,6 +846,18 @@ button.directory:hover {
   font-size: 10px;
   white-space: nowrap;
 }
+/* Host of the page a browser handed the link over from. */
+.origin-tag {
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
 .direct-task-detail,
 .upload-destination {
   margin: 7px 0 0;

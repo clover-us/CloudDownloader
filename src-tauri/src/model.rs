@@ -193,6 +193,18 @@ pub struct Task {
     /// file of that folder shares the same batch and is shown as one row.
     #[serde(default)]
     pub batch: Option<TaskBatch>,
+    /// Set when a browser handed the link over, so the list can say so.
+    #[serde(default)]
+    pub origin: Option<TaskOrigin>,
+}
+
+/// Where a link came from when the app did not build it itself.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskOrigin {
+    /// Host of the page that started the download. Empty when the browser did
+    /// not say (a magnet, or a protocol link typed into the address bar).
+    pub site: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

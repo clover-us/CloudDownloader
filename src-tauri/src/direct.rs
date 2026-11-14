@@ -73,6 +73,21 @@ pub fn validate_headers(input: &[String]) -> Result<Vec<String>, String> {
     Ok(headers)
 }
 
+/// Host of the page a browser handed the link over from, if it sent one.
+///
+/// The task list shows this so a download that came from a web page can be told
+/// apart from one that was pasted into the box by hand.
+pub fn referring_site(headers: &[String]) -> Option<String> {
+    headers.iter().find_map(|header| {
+        let (name, value) = header.split_once(':')?;
+        if !name.trim().eq_ignore_ascii_case("referer") {
+            return None;
+        }
+        let url = url::Url::parse(value.trim()).ok()?;
+        url.host_str().map(str::to_string)
+    })
+}
+
 /// Applies hand-off headers to a request, replacing the defaults they override.
 pub fn attach_headers(
     mut request: reqwest::RequestBuilder,
@@ -465,6 +480,21 @@ mod tests {
         ] {
             assert!(validate_headers(&bad).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn the_page_a_link_came_from_is_read_from_the_referer() {
+        assert_eq!(
+            referring_site(&[
+                "Cookie: uid=42".into(),
+                "Referer: https://pan.example.net/share?id=1".into(),
+            ])
+            .as_deref(),
+            Some("pan.example.net")
+        );
+        // A link pasted by hand has no referer, and a malformed one is not a site.
+        assert_eq!(referring_site(&[]), None);
+        assert_eq!(referring_site(&["Referer: not a url".into()]), None);
     }
 
     #[tokio::test]

@@ -424,6 +424,7 @@ pub async fn enqueue_bt(
         connections: 0,
         upload_speed: 0,
         batch: None,
+        origin: None,
         bt: Some(BtSource {
             info_hash,
             piece_length: torrent.piece_length,

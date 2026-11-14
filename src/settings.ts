@@ -11,6 +11,7 @@ export type Settings = {
   uploadConcurrency: number;
   uploadPartConcurrency: number;
   minSplitMib: number;
+  browserBridge: boolean;
 };
 
 /** 与 src-tauri/src/settings.rs 中的常量保持一致。 */
@@ -50,4 +51,5 @@ export const defaultSettings: Settings = {
   uploadConcurrency: 2,
   uploadPartConcurrency: 4,
   minSplitMib: 1,
+  browserBridge: true,
 };

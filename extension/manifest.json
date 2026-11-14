@@ -1,8 +1,14 @@
 {
   "manifest_version": 3,
   "name": "CloudDownloader 接力",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "把浏览器下载交给 CloudDownloader：保留 Cookie、来源页面和浏览器标识。",
+  "icons": {
+    "16": "icon16.png",
+    "32": "icon32.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
   "permissions": [
     "downloads",
     "cookies",
@@ -13,5 +19,11 @@
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js" },
   "options_page": "options.html",
-  "action": { "default_title": "CloudDownloader 接力" }
+  "action": {
+    "default_title": "CloudDownloader 接力",
+    "default_icon": {
+      "16": "icon16.png",
+      "32": "icon32.png"
+    }
+  }
 }

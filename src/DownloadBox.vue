@@ -324,6 +324,7 @@ async function download() {
           filename: filename.value.trim(),
           connections: connections.value,
           headers: handoff.value?.headers ?? [],
+          fromBrowser: !!handoff.value,
         }),
       ];
     else if (r.kind === "bt")

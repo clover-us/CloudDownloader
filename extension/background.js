@@ -5,7 +5,13 @@
 // user agent the browser had), and only cancels the browser copy once the app
 // has accepted it. If the app is not running the download simply continues.
 
-const DEFAULTS = { enabled: true, port: 17890, minSizeMb: 0, sites: [] };
+const DEFAULTS = {
+  enabled: true,
+  port: 17890,
+  minSizeMb: 0,
+  sites: [],
+  notifyOnFailure: true,
+};
 
 async function settings() {
   return { ...DEFAULTS, ...(await chrome.storage.local.get(DEFAULTS)) };
@@ -31,22 +37,50 @@ async function handOff(url, filename, referrer) {
   // A blob:/data: download has no URL the app could fetch, so it never gets here.
   if (!/^https?:/i.test(url)) throw new Error("只支持 HTTP/HTTPS 直链");
   const cookies = await chrome.cookies.getAll({ url });
-  const response = await fetch(`http://127.0.0.1:${port}/add`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      url,
-      filename: filename || undefined,
-      referrer: referrer || undefined,
-      cookie: cookies.length ? cookieHeader(cookies) : undefined,
-      userAgent: navigator.userAgent,
-    }),
-  });
+  let response;
+  try {
+    response = await fetch(`http://127.0.0.1:${port}/add`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url,
+        filename: filename || undefined,
+        referrer: referrer || undefined,
+        cookie: cookies.length ? cookieHeader(cookies) : undefined,
+        userAgent: navigator.userAgent,
+      }),
+    });
+  } catch {
+    throw new Error(`连不上 127.0.0.1:${port}，CloudDownloader 可能没有运行`);
+  }
   if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`CloudDownloader 拒绝了请求（HTTP ${response.status}）${detail}`);
+    const detail = (await response.text().catch(() => "")).trim();
+    throw new Error(
+      detail
+        ? `应用拒绝了这次请求：${detail}`
+        : `应用拒绝了这次请求（HTTP ${response.status}）`,
+    );
   }
   return response.json();
+}
+
+// A failed hand-off must not be silent: the browser keeps the download, but the
+// user should learn why the app did not take it. Throttled, because a broken
+// bridge would otherwise pop a notification for every file on the page.
+let lastNotice = 0;
+async function notifyFailure(error) {
+  console.warn("CloudDownloader 接力失败，交给浏览器继续下载", error);
+  const { notifyOnFailure } = await settings();
+  if (!notifyOnFailure) return;
+  const now = Date.now();
+  if (now - lastNotice < 20000) return;
+  lastNotice = now;
+  chrome.notifications.create(`handoff-${now}`, {
+    type: "basic",
+    iconUrl: "icon128.png",
+    title: "这次下载仍由浏览器完成",
+    message: `${String(error?.message || error)}。浏览器会继续下载这份文件。`,
+  });
 }
 
 const handing = new Set();
@@ -70,8 +104,7 @@ chrome.downloads.onCreated.addListener(async (item) => {
     await chrome.downloads.cancel(item.id);
     await chrome.downloads.erase({ id: item.id });
   } catch (error) {
-    // Keep the browser download: losing it without a replacement is worse.
-    console.warn("CloudDownloader 接力失败，交给浏览器继续下载", error);
+    await notifyFailure(error);
   } finally {
     handing.delete(item.id);
   }
@@ -90,6 +123,6 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   try {
     await handOff(info.linkUrl, "", info.pageUrl);
   } catch (error) {
-    console.warn("CloudDownloader 接力失败", error);
+    await notifyFailure(error);
   }
 });

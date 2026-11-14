@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { version } from "../package.json";
@@ -57,13 +57,56 @@ const toMib = (kib: number) => Math.round((kib / 1024) * 100) / 100;
 const maxLimitMib = Math.round((maxDownloadLimit / 1024) * 100) / 100;
 
 const draft = ref<Settings>({ ...props.settings });
+const saving = ref(false);
+
+/** 浏览器扩展把下载交给本机时，桥的现状。字段与 src-tauri/src/bridge.rs 对应。 */
+type BridgeStatus = {
+  listening: boolean;
+  port: number;
+  enabled: boolean;
+  last: { site: string; ok: boolean; message: string; at: number } | null;
+};
+
+const bridge = ref<BridgeStatus | null>(null);
+const bridgeLoading = ref(false);
+
+async function refreshBridge() {
+  bridgeLoading.value = true;
+  try {
+    bridge.value = await invoke<BridgeStatus>("bridge_status");
+  } catch (error) {
+    emit("error", String(error));
+  } finally {
+    bridgeLoading.value = false;
+  }
+}
+
+const bridgeState = computed(() => {
+  if (!draft.value.browserBridge) return "已关闭：网页下载仍由浏览器自己完成";
+  if (!bridge.value) return "正在检查本机端口…";
+  return bridge.value.listening
+    ? `正在监听 127.0.0.1:${bridge.value.port}`
+    : "没有在监听：端口被占用或桥启动失败";
+});
+
+const lastHandoff = computed(() => {
+  const last = bridge.value?.last;
+  if (!last) return "还没有接力记录";
+  const time = new Date(last.at * 1000).toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  if (!last.ok) return `${time} 收到请求但没接住：${last.message}`;
+  return `${time} 接收了来自 ${last.site || "未知站点"} 的链接`;
+});
+
+onMounted(() => void refreshBridge());
 const limitInput = ref(toMib(props.settings.maxOverallDownloadLimit));
 const concurrentInput = ref(props.settings.maxConcurrentDownloads);
 const uploadChunkInput = ref(props.settings.uploadChunkMib);
 const uploadConcurrentInput = ref(props.settings.uploadConcurrency);
 const uploadPartConcurrentInput = ref(props.settings.uploadPartConcurrency);
 const minSplitInput = ref(props.settings.minSplitMib);
-const saving = ref(false);
 
 function syncInputs(value: Settings) {
   draft.value = { ...value };
@@ -86,7 +129,8 @@ function sameSettings(a: Settings, b: Settings) {
     a.uploadChunkMib === b.uploadChunkMib &&
     a.uploadConcurrency === b.uploadConcurrency &&
     a.uploadPartConcurrency === b.uploadPartConcurrency &&
-    a.minSplitMib === b.minSplitMib
+    a.minSplitMib === b.minSplitMib &&
+    a.browserBridge === b.browserBridge
   );
 }
 
@@ -145,7 +189,10 @@ function applyConcurrent() {
 
 function applyUploadChunk() {
   const parsed = Math.round(Number(uploadChunkInput.value) || 0);
-  const clamped = Math.min(Math.max(parsed, minUploadChunkMib), maxUploadChunkMib);
+  const clamped = Math.min(
+    Math.max(parsed, minUploadChunkMib),
+    maxUploadChunkMib,
+  );
   uploadChunkInput.value = clamped;
   if (clamped !== draft.value.uploadChunkMib) {
     void apply({ uploadChunkMib: clamped });
@@ -267,8 +314,16 @@ function bump(field: StepperField, direction: 1 | -1, steps = 1): boolean {
   const config = stepConfig(field);
   const clamp = (value: number, min: number, max: number) =>
     Math.min(Math.max(value, min), max);
-  const current = clamp(Number(config.value()) || config.min, config.min, config.max);
-  const next = clamp(current + direction * config.step * steps, config.min, config.max);
+  const current = clamp(
+    Number(config.value()) || config.min,
+    config.min,
+    config.max,
+  );
+  const next = clamp(
+    current + direction * config.step * steps,
+    config.min,
+    config.max,
+  );
   const changed = next !== config.value();
   config.store(next);
   config.apply();
@@ -459,6 +514,51 @@ function openRepository() {
 
     <section class="settings-group card">
       <div class="group-head">
+        <h2>浏览器接力</h2>
+        <p>网页里的下载交给本应用，保留登录信息</p>
+      </div>
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>接收浏览器下载</strong>
+          <small>{{ bridgeState }}</small>
+        </div>
+        <div class="segmented" role="group" aria-label="是否接收浏览器下载">
+          <button
+            :class="{ selected: draft.browserBridge }"
+            :aria-pressed="draft.browserBridge"
+            :disabled="saving"
+            @click="apply({ browserBridge: true })"
+          >
+            开启
+          </button>
+          <button
+            :class="{ selected: !draft.browserBridge }"
+            :aria-pressed="!draft.browserBridge"
+            :disabled="saving"
+            @click="apply({ browserBridge: false })"
+          >
+            关闭
+          </button>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>最近一次接力</strong>
+          <small>{{ lastHandoff }}</small>
+        </div>
+        <button
+          class="text-button"
+          :disabled="bridgeLoading"
+          @click="refreshBridge"
+        >
+          重新检查
+        </button>
+      </div>
+    </section>
+
+    <section class="settings-group card">
+      <div class="group-head">
         <h2>传输</h2>
         <p>立即生效，进行中的任务不受影响</p>
       </div>
@@ -591,7 +691,10 @@ function openRepository() {
         <div class="setting-copy">
           <strong>最小分段大小</strong>
           <small
-            >aria2 下载的最小分段（{{ minSplitMib }}–{{ maxSplitMib }} MiB）；越小分段越细，越大分段越少</small
+            >aria2 下载的最小分段（{{ minSplitMib }}–{{
+              maxSplitMib
+            }}
+            MiB）；越小分段越细，越大分段越少</small
           >
         </div>
         <div class="row-actions">
@@ -643,7 +746,8 @@ function openRepository() {
             迅雷 / 夸克上传的分片粒度（{{ minUploadChunkMib }}–{{
               maxUploadChunkMib
             }}
-            MiB）；越大多分片开销越少，越小断点续传越细。百度上传按协议固定 4 MiB。
+            MiB）；越大多分片开销越少，越小断点续传越细。百度上传按协议固定 4
+            MiB。
           </small>
         </div>
         <div class="row-actions">
@@ -866,7 +970,10 @@ function openRepository() {
           <CircleAlert v-else-if="updateStatus.phase === 'error'" :size="18" />
           <Check v-else-if="updateStatus.phase === 'current'" :size="18" />
           <Sparkles v-else-if="updateStatus.phase === 'available'" :size="18" />
-          <CloudDownload v-else-if="updateStatus.phase === 'ready'" :size="18" />
+          <CloudDownload
+            v-else-if="updateStatus.phase === 'ready'"
+            :size="18"
+          />
           <RefreshCw v-else :size="18" />
           <div>
             <strong>{{ title }}</strong>
@@ -875,7 +982,10 @@ function openRepository() {
         </div>
         <div class="update-actions">
           <button
-            v-if="updateStatus.phase !== 'available' && updateStatus.phase !== 'ready'"
+            v-if="
+              updateStatus.phase !== 'available' &&
+              updateStatus.phase !== 'ready'
+            "
             class="secondary"
             :disabled="busy || updateStatus.phase === 'downloading'"
             @click="checkForUpdates()"

@@ -68,7 +68,12 @@ type Handoff = { url: string; filename?: string | null; headers?: string[] };
 type Task = {
   bt?: { selected: number[]; maxPeers: number } | null;
   uploadSpeed?: number;
-  direct?: { url: string; connections: number; rangeSupported: boolean } | null;
+  direct?: {
+    url: string;
+    connections: number;
+    rangeSupported: boolean;
+  } | null;
+  origin?: { site: string } | null;
   connections?: number;
   own?: { accountId: string } | null;
   batch?: TaskBatch | null;
@@ -1360,9 +1365,14 @@ onUnmounted(() => {
                       row.task.bt
                         ? "BT 下载"
                         : row.task.direct
-                          ? "普通链接"
+                          ? row.task.origin
+                            ? "浏览器接力"
+                            : "普通链接"
                           : providerName(row.task.share.provider) +
                             (row.task.own ? " · 我的网盘" : "")
+                    }}</span>
+                    <span v-if="row.task.origin?.site" class="origin-tag">{{
+                      row.task.origin.site
                     }}</span>
                     <span
                       >{{ bytes(row.task.completed) }} /

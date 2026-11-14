@@ -173,6 +173,7 @@ mod tests {
                 bt: None,
                 upload_speed: 0,
                 batch: None,
+                origin: None,
             };
             self.store().save(&task).unwrap();
             task

@@ -66,6 +66,8 @@ pub struct Settings {
     pub upload_concurrency: u8,
     pub upload_part_concurrency: u8,
     pub min_split_mib: u8,
+    /// 浏览器扩展把下载接力给本机时使用的开关（关闭后不再接受请求）。
+    pub browser_bridge: bool,
 }
 
 impl Default for Settings {
@@ -81,6 +83,7 @@ impl Default for Settings {
             upload_concurrency: DEFAULT_UPLOAD_CONCURRENCY,
             upload_part_concurrency: DEFAULT_UPLOAD_PART_CONCURRENCY,
             min_split_mib: DEFAULT_SPLIT_MIB,
+            browser_bridge: true,
         }
     }
 }
@@ -149,6 +152,9 @@ impl Settings {
             if (MIN_SPLIT_MIB..=MAX_SPLIT_MIB).contains(&value) {
                 settings.min_split_mib = value;
             }
+        }
+        if let Some(value) = store.setting("browser_bridge") {
+            settings.browser_bridge = value != "0";
         }
         settings
     }
@@ -257,6 +263,10 @@ pub fn save(store: &crate::store::Store, settings: &Settings) -> Result<Settings
         &settings.upload_part_concurrency.to_string(),
     )?;
     store.set_setting("min_split_mib", &settings.min_split_mib.to_string())?;
+    store.set_setting(
+        "browser_bridge",
+        if settings.browser_bridge { "1" } else { "0" },
+    )?;
     Ok(settings.clone())
 }
 

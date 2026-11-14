@@ -365,6 +365,7 @@ pub async fn drive_enqueue(
             bt: None,
             upload_speed: 0,
             batch: group.clone(),
+            origin: None,
         };
         state.store.lock().unwrap().save(&task)?;
         created.push(task);

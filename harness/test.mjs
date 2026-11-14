@@ -28,7 +28,7 @@ try {
 }
 const page = await browser.newPage({ viewport: { width: 1180, height: 822 } });
 const pageErrors = [];
-page.on("pageerror", (e) => pageErrors.push(String(e)));
+page.on("pageerror", (e) => pageErrors.push(e.stack || String(e)));
 page.on("console", (m) => {
   if (
     m.type() === "error" &&
@@ -513,9 +513,29 @@ const groups = (await page.locator(".settings-group h2").allInnerTexts()).join(
 );
 check(
   "J1 settings panel renders all groups",
-  ["通用", "传输", "外观", "关于与更新"].every((g) => groups.includes(g)),
+  ["通用", "浏览器接力", "传输", "外观", "关于与更新"].every((g) =>
+    groups.includes(g),
+  ),
   groups,
 );
+// The bridge state comes from the backend, so wait for it instead of guessing.
+await page.waitForFunction(() =>
+  document.querySelector(".settings")?.textContent?.includes("127.0.0.1:17890"),
+);
+check("J1b settings shows the bridge listening", true);
+await page.evaluate(() => {
+  window.__MOCK__.state.lastHandoff = {
+    site: "example.com",
+    ok: true,
+    message: "",
+    at: 1762000000,
+  };
+});
+await page.getByRole("button", { name: "重新检查" }).click();
+await page.waitForFunction(() =>
+  document.querySelector(".settings")?.textContent?.includes("example.com"),
+);
+check("J1c settings shows the last hand-off", true);
 await shot("14-settings");
 
 // --- I. Loading state (slow refresh survives reload via init script) ---
@@ -824,7 +844,9 @@ await page.waitForFunction(() =>
   window.__MOCK__.state.calls.some((c) => c.cmd === "inspect_download"),
 );
 await page.waitForFunction(() =>
-  document.querySelector(".unified-type")?.textContent?.includes("普通文件链接"),
+  document
+    .querySelector(".unified-type")
+    ?.textContent?.includes("普通文件链接"),
 );
 check(
   "M2 handoff parses the link",
@@ -860,32 +882,83 @@ await page.waitForFunction(() =>
     .querySelector(".unified-download")
     ?.textContent?.includes("已带上浏览器的登录信息"),
 );
-check(
-  "M5 handoff says it carries the browser login",
-  true,
-);
-const inspectArgs = await page.evaluate(() =>
-  window.__MOCK__.state.calls.filter((c) => c.cmd === "inspect_download").at(-1)
-    ?.args,
+check("M5 handoff says it carries the browser login", true);
+const inspectArgs = await page.evaluate(
+  () =>
+    window.__MOCK__.state.calls
+      .filter((c) => c.cmd === "inspect_download")
+      .at(-1)?.args,
 );
 check(
   "M6 handoff hands the headers to the probe",
   JSON.stringify(inspectArgs?.headers) === JSON.stringify(handed.headers),
   JSON.stringify(inspectArgs),
 );
-await page.locator(".unified-download .selection-footer button.primary").click();
+await page
+  .locator(".unified-download .selection-footer button.primary")
+  .click();
 await page.waitForFunction(() =>
   window.__MOCK__.state.calls.some((c) => c.cmd === "enqueue_direct"),
 );
-const enqueueArgs = await page.evaluate(() =>
-  window.__MOCK__.state.calls.filter((c) => c.cmd === "enqueue_direct").at(-1)
-    ?.args,
+const enqueueArgs = await page.evaluate(
+  () =>
+    window.__MOCK__.state.calls.filter((c) => c.cmd === "enqueue_direct").at(-1)
+      ?.args,
 );
 check(
   "M7 handoff passes the headers on to aria2",
   enqueueArgs?.url === handed.url &&
     JSON.stringify(enqueueArgs?.headers) === JSON.stringify(handed.headers),
   JSON.stringify(enqueueArgs),
+);
+check(
+  "M8 handoff marks the task as coming from a browser",
+  enqueueArgs?.fromBrowser === true,
+  JSON.stringify(enqueueArgs),
+);
+
+// A task the app built from a browser hand-off says so in the list.
+await page.evaluate(() => {
+  window.__MOCK__.state.tasks.push({
+    id: "handoff-1",
+    name: "signed-video.mp4",
+    size: 1024,
+    completed: 0,
+    speed: 0,
+    status: "active",
+    error: "",
+    directory: "D:\\Downloads",
+    createdAt: 1762000000,
+    share: { provider: "quark", id: "", passcode: "" },
+    file: {
+      id: "handoff-1",
+      name: "signed-video.mp4",
+      size: 1024,
+      isDir: false,
+      parentId: "",
+    },
+    direct: {
+      url: "https://example.com/files/signed-video.mp4",
+      connections: 8,
+      rangeSupported: true,
+    },
+    origin: { site: "example.com" },
+  });
+  window.__MOCK__.emit("tasks-changed");
+});
+const originBadge = await page.evaluate(() => {
+  const row = [...document.querySelectorAll("article.task-row")].find((r) =>
+    r.textContent?.includes("signed-video.mp4"),
+  );
+  return {
+    tag: row?.querySelector(".provider-tag")?.textContent?.trim(),
+    site: row?.querySelector(".origin-tag")?.textContent?.trim(),
+  };
+});
+check(
+  "M9 the list shows which page handed the link over",
+  originBadge.tag === "浏览器接力" && originBadge.site === "example.com",
+  JSON.stringify(originBadge),
 );
 
 check(

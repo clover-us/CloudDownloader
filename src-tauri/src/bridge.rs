@@ -7,11 +7,15 @@
 //! forge that header, and a cross-site page would be blocked before reaching us.
 
 use crate::handoff::{self, Handoff};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
-    time::Duration,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 /// Fixed port so the extension needs no discovery. A second copy of the app
@@ -19,6 +23,64 @@ use std::{
 pub const PORT: u16 = 17890;
 const MAX_HEAD: usize = 8 * 1024;
 const MAX_BODY: usize = 64 * 1024;
+
+/// Whether the socket is open, so the settings page can say so.
+static LISTENING: AtomicBool = AtomicBool::new(false);
+/// The last request that arrived, so a hand-off that did not show up can be
+/// explained without reading logs.
+static LAST: Mutex<Option<LastHandoff>> = Mutex::new(None);
+
+/// One bridge request, kept for the settings page.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LastHandoff {
+    /// Host of the page that started the download; empty when unknown.
+    pub site: String,
+    pub ok: bool,
+    /// Why it was refused, when it was.
+    pub message: String,
+    /// Unix seconds.
+    pub at: u64,
+}
+
+fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or_default()
+}
+
+fn record(site: String, ok: bool, message: String) {
+    if let Ok(mut last) = LAST.lock() {
+        *last = Some(LastHandoff {
+            site,
+            ok,
+            message,
+            at: now(),
+        });
+    }
+}
+
+/// What the settings page shows about the browser hand-off.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeStatus {
+    /// The socket is open and accepting requests.
+    pub listening: bool,
+    pub port: u16,
+    /// The user has not turned the bridge off in settings.
+    pub enabled: bool,
+    pub last: Option<LastHandoff>,
+}
+
+pub fn status(enabled: bool) -> BridgeStatus {
+    BridgeStatus {
+        listening: LISTENING.load(Ordering::Relaxed),
+        port: PORT,
+        enabled,
+        last: LAST.lock().ok().and_then(|last| last.clone()),
+    }
+}
 
 /// Starts the bridge on a background thread. A failed bind only costs the
 /// extension path, so the failure is reported and startup continues.
@@ -30,6 +92,7 @@ pub fn start(app: tauri::AppHandle) {
             return;
         }
     };
+    LISTENING.store(true, Ordering::Relaxed);
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             let app = app.clone();
@@ -48,7 +111,9 @@ fn answer(mut stream: TcpStream, app: &tauri::AppHandle) -> std::io::Result<()> 
         Err((status, message)) => return reply(&mut stream, status, None, &message),
     };
     let origin = extension_origin(header_value(&head, "origin").as_deref());
-    match route(&head, &body, origin.as_deref()) {
+    let enabled = bridge_enabled(app);
+    let adds = request_line(&head).is_some_and(|(_, target)| target == "/add");
+    match route(&head, &body, origin.as_deref(), enabled) {
         Ok(Routed::Preflight) => reply(&mut stream, 204, origin.as_deref(), ""),
         Ok(Routed::Ping) => reply(
             &mut stream,
@@ -59,11 +124,30 @@ fn answer(mut stream: TcpStream, app: &tauri::AppHandle) -> std::io::Result<()> 
         Ok(Routed::Add(item)) => {
             // Queue before answering so the extension only removes the browser
             // download once the app really has the link.
+            record(
+                crate::direct::referring_site(&item.headers).unwrap_or_default(),
+                true,
+                String::new(),
+            );
             handoff::push(app, item);
             reply(&mut stream, 200, origin.as_deref(), "{\"ok\":true}")
         }
-        Err((status, message)) => reply(&mut stream, status, origin.as_deref(), &message),
+        Err((status, message)) => {
+            if adds {
+                record(String::new(), false, message.clone());
+            }
+            reply(&mut stream, status, origin.as_deref(), &message)
+        }
     }
+}
+
+/// Reads the user preference once per request; the setting changes rarely enough
+/// that caching it would only make the toggle feel broken.
+fn bridge_enabled(app: &tauri::AppHandle) -> bool {
+    use tauri::Manager;
+    let state = app.state::<crate::AppState>();
+    let store = state.store.lock().unwrap();
+    crate::settings::Settings::load(&store).browser_bridge
 }
 
 enum Routed {
@@ -87,7 +171,12 @@ struct Payload {
 }
 
 /// What a request is allowed to ask for, with no I/O, so it can be tested.
-fn route(head: &str, body: &[u8], origin: Option<&str>) -> Result<Routed, (u16, String)> {
+fn route(
+    head: &str,
+    body: &[u8],
+    origin: Option<&str>,
+    enabled: bool,
+) -> Result<Routed, (u16, String)> {
     let (method, target) = request_line(head).ok_or((400, "请求格式无效".into()))?;
     if method == "OPTIONS" {
         // Chrome preflights a JSON POST from an extension context.
@@ -108,6 +197,11 @@ fn route(head: &str, body: &[u8], origin: Option<&str>) -> Result<Routed, (u16, 
     }
     if target != "/add" {
         return Err((404, "未知接口".into()));
+    }
+    // Turning the bridge off must beat a queued page download, so the check sits
+    // before the payload is even parsed.
+    if !enabled {
+        return Err((503, "浏览器接力已在设置中关闭".into()));
     }
     let content_type = header_value(head, "content-type").unwrap_or_default();
     let content_type = content_type.to_ascii_lowercase();
@@ -211,6 +305,7 @@ fn reply(
         413 => "Payload Too Large",
         415 => "Unsupported Media Type",
         431 => "Request Header Fields Too Large",
+        503 => "Service Unavailable",
         _ => "Error",
     };
     // The body is JSON in every case, including errors, so the extension can
@@ -280,7 +375,7 @@ mod tests {
             "userAgent": "Browser/1.0",
         })
         .to_string();
-        let Ok(Routed::Add(item)) = route(&post(&body), body.as_bytes(), Some(ORIGIN)) else {
+        let Ok(Routed::Add(item)) = route(&post(&body), body.as_bytes(), Some(ORIGIN), true) else {
             panic!("expected an add");
         };
         assert_eq!(item.url, "https://example.test/a.zip");
@@ -297,15 +392,18 @@ mod tests {
         // Preflight only for a real extension.
         let preflight = format!("OPTIONS /add HTTP/1.1\r\nOrigin: {ORIGIN}\r\n\r\n");
         assert!(matches!(
-            route(&preflight, b"", Some(ORIGIN)),
+            route(&preflight, b"", Some(ORIGIN), true),
             Ok(Routed::Preflight)
         ));
-        assert_eq!(route(&preflight, b"", None).err().unwrap().0, 403);
+        assert_eq!(route(&preflight, b"", None, true).err().unwrap().0, 403);
 
         // The options page uses /ping to prove the app is running.
         let ping = format!("POST /ping HTTP/1.1\r\nOrigin: {ORIGIN}\r\n\r\n");
-        assert!(matches!(route(&ping, b"", Some(ORIGIN)), Ok(Routed::Ping)));
-        assert_eq!(route(&ping, b"", None).err().unwrap().0, 403);
+        assert!(matches!(
+            route(&ping, b"", Some(ORIGIN), true),
+            Ok(Routed::Ping)
+        ));
+        assert_eq!(route(&ping, b"", None, true).err().unwrap().0, 403);
 
         let json = format!(
             "POST /add HTTP/1.1\r\nOrigin: {ORIGIN}\r\nContent-Type: application/json\r\n\r\n"
@@ -338,7 +436,7 @@ mod tests {
         ];
         for (head, origin, status) in cases {
             assert_eq!(
-                route(&head, b"{}", origin).err().unwrap().0,
+                route(&head, b"{}", origin, true).err().unwrap().0,
                 status,
                 "{head}"
             );
@@ -346,12 +444,18 @@ mod tests {
         // Valid JSON is not enough: the link itself has to be routable.
         let local = r#"{"url":"file:///C:/Windows/System32/cmd.exe"}"#;
         assert_eq!(
-            route(&json, local.as_bytes(), Some(ORIGIN))
+            route(&json, local.as_bytes(), Some(ORIGIN), true)
                 .err()
                 .unwrap()
                 .0,
             400
         );
+        // Turning the bridge off refuses the add, and says why.
+        let (status, message) = route(&post(&body), body.as_bytes(), Some(ORIGIN), false)
+            .err()
+            .unwrap();
+        assert_eq!(status, 503);
+        assert!(message.contains("设置"), "{message}");
     }
 
     #[test]

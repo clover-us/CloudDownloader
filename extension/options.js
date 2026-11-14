@@ -1,4 +1,10 @@
-const DEFAULTS = { enabled: true, port: 17890, minSizeMb: 0, sites: [] };
+const DEFAULTS = {
+  enabled: true,
+  port: 17890,
+  minSizeMb: 0,
+  sites: [],
+  notifyOnFailure: true,
+};
 const $ = (id) => document.getElementById(id);
 
 async function load() {
@@ -7,6 +13,7 @@ async function load() {
   $("port").value = saved.port;
   $("minSizeMb").value = saved.minSizeMb;
   $("sites").value = saved.sites.join("\n");
+  $("notifyOnFailure").checked = saved.notifyOnFailure;
 }
 
 function collect() {
@@ -20,6 +27,7 @@ function collect() {
     port: Math.min(65535, Math.max(1, Number($("port").value) || 17890)),
     minSizeMb: Math.max(0, Number($("minSizeMb").value) || 0),
     sites: [...new Set(sites)],
+    notifyOnFailure: $("notifyOnFailure").checked,
   };
 }
 

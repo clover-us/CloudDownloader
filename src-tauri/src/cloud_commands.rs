@@ -414,6 +414,7 @@ pub async fn cloud_enqueue(
             bt: None,
             upload_speed: 0,
             batch: group.clone(),
+            origin: None,
         };
         state.store.lock().unwrap().save(&task)?;
         tasks.push(task);
