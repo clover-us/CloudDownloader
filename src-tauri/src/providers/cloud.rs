@@ -234,6 +234,49 @@ pub fn entry(provider: Provider, raw: &Value, parent: &str) -> Result<Entry, Str
         ),
         _ => return Err("此网盘使用专用文件接口".into()),
     };
+    let created = match provider {
+        Provider::Quark | Provider::Uc => {
+            let c = number(&raw["created_at"]) / 1000;
+            if c > 0 {
+                c
+            } else {
+                modified
+            }
+        }
+        Provider::Pan115 => {
+            let c = number(&raw["ctime"]);
+            if c > 0 {
+                c
+            } else {
+                modified
+            }
+        }
+        Provider::Pan123 => {
+            let c = entry_timestamp(raw, &["CreateAt"]);
+            if c > 0 {
+                c
+            } else {
+                modified
+            }
+        }
+        Provider::C139 => {
+            let c = entry_timestamp(raw, &["createTime"]);
+            if c > 0 {
+                c
+            } else {
+                modified
+            }
+        }
+        Provider::Xunlei => {
+            let c = entry_timestamp(raw, &["created_time"]);
+            if c > 0 {
+                c
+            } else {
+                modified
+            }
+        }
+        _ => modified,
+    };
     let component = path_component(provider, &id)?;
     if name.is_empty() {
         return Err("网盘文件名称缺失，请刷新列表".into());
@@ -246,6 +289,7 @@ pub fn entry(provider: Provider, raw: &Value, parent: &str) -> Result<Entry, Str
             size,
             is_dir,
             modified,
+            created,
             md5: hash,
         },
         metadata: raw.clone(),

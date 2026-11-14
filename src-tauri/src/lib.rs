@@ -326,6 +326,22 @@ async fn start_task(
     Ok(task)
 }
 
+/// Resolves freshly queued tasks one by one off the UI thread. The tasks are
+/// already persisted as "resolving" before this runs, so the list shows them
+/// immediately instead of blocking the download button for every folder item.
+fn resolve_tasks_in_background(app: tauri::AppHandle, tasks: Vec<Task>) {
+    if tasks.is_empty() {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        for task in tasks {
+            let state = app.state::<AppState>();
+            let _guard = state.resolving.lock().await;
+            let _ = start_task(&app, &state, task, None).await;
+        }
+    });
+}
+
 #[tauri::command]
 async fn enqueue(
     window: WebviewWindow,
@@ -812,13 +828,16 @@ pub fn run() {
             open_data_directory,
             drive_commands::drive_list,
             cloud_commands::cloud_list,
+            cloud_commands::dir_list_all,
             cloud_commands::cloud_enqueue,
             drive_commands::drive_enqueue,
             drive_commands::drive_mkdir,
+            drive_commands::drive_mkdir_at,
             drive_commands::drive_share,
             drive_commands::drive_cancel_share,
             drive_commands::upload_enqueue,
-            drive_commands::upload_action
+            drive_commands::upload_action,
+            drive_commands::collect_local_files
         ])
         .build(tauri::generate_context!())
         .expect("程序初始化失败");

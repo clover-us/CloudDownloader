@@ -83,3 +83,46 @@ export function shareProvider(text: string): Provider | undefined {
     }
   }
 }
+
+/** File-manager actions a provider may expose in the drive workspace. */
+export type DriveAction =
+  | "browse"
+  | "download"
+  | "upload"
+  | "mkdir"
+  | "share"
+  | "rename"
+  | "delete";
+
+/**
+ * Per-provider capabilities. This mirrors what the Rust backend exposes today,
+ * so unsupported actions can be rendered disabled instead of silently failing.
+ * Backend reality: every provider browses + downloads; Baidu can create folders
+ * and shares; Baidu and Xunlei can create folders and upload; none can
+ * rename/delete.
+ */
+export const driveCapabilities: Record<Provider, DriveAction[]> = {
+  quark: ["browse", "download"],
+  baidu: ["browse", "download", "upload", "mkdir", "share"],
+  xunlei: ["browse", "download", "upload", "mkdir"],
+  pan115: ["browse", "download"],
+  pan123: ["browse", "download"],
+  c139: ["browse", "download"],
+  uc: ["browse", "download"],
+  lanzou: ["browse", "download"],
+  ilanzou: ["browse", "download"],
+};
+
+export const canDrive = (id: Provider, action: DriveAction) =>
+  driveCapabilities[id].includes(action);
+
+/** One-line description of what the drive workspace can do for a provider. */
+export function driveSummary(id: Provider): string {
+  const extras: string[] = [];
+  if (canDrive(id, "upload")) extras.push("上传");
+  if (canDrive(id, "mkdir")) extras.push("新建文件夹");
+  if (canDrive(id, "share")) extras.push("分享");
+  return extras.length
+    ? `浏览${providerName(id)}，支持${extras.join("、")}与下载。`
+    : `浏览${providerName(id)}，选择文件或文件夹下载到本地。`;
+}

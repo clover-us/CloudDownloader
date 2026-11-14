@@ -52,13 +52,23 @@ fn check(data: Value) -> Result<Value, String> {
 }
 
 pub fn parse_file(v: &Value) -> Result<DriveFile, String> {
+    let mtime = number(&v["server_mtime"]);
+    let ctime = {
+        let c = number(&v["server_ctime"]);
+        if c > 0 {
+            c
+        } else {
+            mtime
+        }
+    };
     let file = DriveFile {
         id: text(&v["fs_id"]),
         path: text(&v["path"]),
         name: text(&v["server_filename"]),
         size: number(&v["size"]),
         is_dir: number(&v["isdir"]) == 1,
-        modified: number(&v["server_mtime"]),
+        modified: mtime,
+        created: ctime,
         md5: text(&v["md5"]),
     };
     remote_path(&file.path)?;

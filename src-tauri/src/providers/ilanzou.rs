@@ -58,6 +58,10 @@ fn file(raw: &Value, parent: &str) -> Result<Entry, String> {
                 raw,
                 &["updateTime", "createTime", "modifiedTime", "time"],
             ),
+            created: crate::providers::cloud::entry_timestamp(
+                raw,
+                &["createTime", "createdTime", "updateTime"],
+            ),
             md5: String::new(),
         },
         metadata: raw.clone(),

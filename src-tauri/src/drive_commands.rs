@@ -1,7 +1,7 @@
 use crate::{
     model::*,
     providers::{baidu_drive::remote_path, cloud},
-    session, start_task, trusted,
+    resolve_tasks_in_background, session, trusted,
     upload::{self, UploadRecord, UploadView},
     AppState,
 };
@@ -36,6 +36,44 @@ pub async fn drive_mkdir(
     let session = session::connect(&app, Provider::Baidu).await?;
     let identity = session.baidu_identity(Some(&account_id)).await?;
     session.drive_mkdir(&identity, &path).await
+}
+
+/// 在任意受支持网盘的目标路径下新建一级文件夹（百度按路径名，迅雷按父目录 id）。
+#[tauri::command]
+pub async fn drive_mkdir_at(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+    provider: Provider,
+    account_id: String,
+    parent: String,
+    name: String,
+) -> Result<DriveFile, String> {
+    trusted(&window)?;
+    child_path(&parent, &name)?;
+    let session = session::connect(&app, provider).await?;
+    match provider {
+        Provider::Baidu => {
+            let path = child_path(&parent, &name)?;
+            let identity = session.baidu_identity(Some(&account_id)).await?;
+            session.drive_mkdir(&identity, &path).await
+        }
+        Provider::Xunlei => {
+            let identity = session.cloud_identity().await?;
+            if identity.0 != account_id {
+                return Err("网盘账号已切换，请重新选择目录".into());
+            }
+            remote_path(&parent)?;
+            let parent_id = if parent.trim_end_matches('/').is_empty() {
+                "0".to_string()
+            } else {
+                cloud::parent_id(&parent, provider)?
+            };
+            let mut file = session.xunlei_mkdir(&parent_id, &name).await?;
+            file.path = format!("{}/{}", parent.trim_end_matches('/'), file.id);
+            Ok(file)
+        }
+        _ => Err("该网盘暂不支持新建文件夹".into()),
+    }
 }
 
 fn child_path(parent: &str, name: &str) -> Result<String, String> {
@@ -177,11 +215,13 @@ pub async fn drive_enqueue(
             bt: None,
             upload_speed: 0,
         };
-        created.push(start_task(&app, &state, task, None).await?);
+        state.store.lock().unwrap().save(&task)?;
+        created.push(task);
     }
     if created.is_empty() {
         return Err("所选文件已在任务列表中，或文件夹为空".into());
     }
+    resolve_tasks_in_background(app.clone(), created.clone());
     Ok(created)
 }
 
@@ -399,4 +439,48 @@ pub async fn upload_action(
         _ => return Err("未知上传操作".into()),
     }
     Ok(())
+}
+
+/// 递归收集本地文件夹内的全部文件，带相对子目录（保留目录结构上传用）。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalEntry {
+    pub path: String,
+    pub relative: String,
+}
+
+#[tauri::command]
+pub fn collect_local_files(root: String) -> Result<Vec<LocalEntry>, String> {
+    fn walk(
+        dir: &std::path::Path,
+        base: &std::path::Path,
+        out: &mut Vec<LocalEntry>,
+    ) -> Result<(), String> {
+        for entry in std::fs::read_dir(dir).map_err(|_| "无法读取所选文件夹")? {
+            let entry = entry.map_err(|_| "无法读取所选文件夹")?;
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, base, out)?;
+            } else if path.is_file() {
+                let relative = path
+                    .parent()
+                    .and_then(|parent| parent.strip_prefix(base).ok())
+                    .map(|parent| parent.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_default();
+                out.push(LocalEntry {
+                    path: path.to_string_lossy().to_string(),
+                    relative,
+                });
+            }
+        }
+        Ok(())
+    }
+    let base = std::path::Path::new(&root);
+    if !base.is_dir() {
+        return Err("请选择有效的文件夹".into());
+    }
+    let mut out = Vec::new();
+    walk(base, base, &mut out)?;
+    out.sort_by(|a, b| a.relative.cmp(&b.relative).then(a.path.cmp(&b.path)));
+    Ok(out)
 }

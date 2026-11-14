@@ -230,6 +230,8 @@ pub struct DriveFile {
     pub size: u64,
     pub is_dir: bool,
     pub modified: u64,
+    #[serde(default)]
+    pub created: u64,
     pub md5: String,
 }
 

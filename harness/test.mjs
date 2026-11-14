@@ -3,7 +3,7 @@
 import { chromium } from "playwright";
 import { mkdirSync } from "node:fs";
 
-const BASE = "http://localhost:1420/harness/index.html";
+const BASE = process.env.BASE ?? "http://localhost:1420/harness/index.html";
 const SHOTS = new URL("./shots/", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 mkdirSync(SHOTS, { recursive: true });
 
@@ -53,7 +53,7 @@ await shot("01-account-light");
 await page.locator(".account-add-row").click();
 await page.waitForSelector(".account-dialog");
 check("B1 dialog sections", (await page.locator(".provider-section-caption").allInnerTexts()).join("|").includes("已连接") && (await page.locator(".provider-section-caption").allInnerTexts()).join("|").includes("未登录"));
-check("B2 3 connected + 5 available tiles", (await page.locator(".provider-tile.connected").count()) === 3 && (await page.locator(".provider-tile:not(.connected)").count()) === 5);
+check("B2 3 connected + 6 available tiles", (await page.locator(".provider-tile.connected").count()) === 3 && (await page.locator(".provider-tile:not(.connected)").count()) === 6);
 await shot("02-dialog-light");
 await page.locator(".account-dialog-search input").fill("123");
 check("B3 search filters to 123 云盘", (await page.locator(".provider-tile").count()) === 1 && (await page.locator(".provider-tile strong").innerText()).includes("123"));
@@ -124,6 +124,78 @@ await page.locator(".drive-providers button", { hasText: "百度网盘" }).click
 await page.waitForFunction(() => window.__MOCK__.lastCall("drive_list") !== undefined);
 check("D4 baidu panel switches", true);
 
+// --- D2. File-manager affordances gated by capability ---
+await page.locator(".drive-providers button", { hasText: "115 网盘" }).click();
+await page.waitForSelector(".drive-file-row");
+check(
+  "D5 download-only provider hides upload",
+  (await page.locator(".drive-toolbar button", { hasText: "上传文件" }).count()) === 0,
+);
+check(
+  "D6 download-only provider hides mkdir",
+  (await page.locator(".drive-toolbar button", { hasText: "新建文件夹" }).count()) === 0,
+);
+await page.locator(".drive-file-row").first().locator('input[type="checkbox"]').check();
+await page.waitForSelector(".drive-batchbar");
+const batch = page.locator(".drive-batchbar");
+check("D7 batch bar shows selection", (await batch.innerText()).includes("已选中"));
+check("D8 share disabled for download-only provider", await batch.locator("button", { hasText: "分享" }).isDisabled());
+await shot("05b-drive-pan115-selection");
+await batch.locator("button.batch-clear").click();
+await page.locator(".drive-providers button", { hasText: "百度网盘" }).click();
+await page.waitForFunction(() => window.__MOCK__.lastCall("drive_list") !== undefined);
+await page.waitForSelector(".drive-file-row");
+check(
+  "D9 baidu shows upload and mkdir",
+  (await page.locator(".drive-toolbar button", { hasText: "上传文件" }).count()) === 1 &&
+    (await page.locator(".drive-toolbar button", { hasText: "新建文件夹" }).count()) === 1,
+);
+check("D10 hover row actions rendered", (await page.locator(".drive-file-row .drive-row-actions").count()) >= 1);
+await shot("05c-drive-baidu");
+
+// --- D3. Per-row actions appear on hover (and stay hidden otherwise) ---
+const actionOpacity = (i) =>
+  page.locator(".drive-file-row").nth(i).locator(".drive-row-actions").evaluate((el) => getComputedStyle(el).opacity);
+check("D11 row actions hidden by default", (await actionOpacity(1)) === "0");
+await page.locator(".drive-file-row").first().hover();
+await page.waitForTimeout(250);
+check("D12 row actions visible on hover", (await actionOpacity(0)) === "1");
+await shot("05d-drive-baidu-hover");
+
+// --- D4. Sort panel: created-time sort is now available ---
+await page.locator(".drive-toolbar-group .icon-button[title^='排序']").click();
+await page.waitForSelector(".menu-sort");
+const createdOptions = page
+  .locator(".menu-sort .sort-group", { hasText: "按创建时间" })
+  .locator(".sort-option");
+check(
+  "D13 created-time sort enabled",
+  (await createdOptions.count()) === 2 && !(await createdOptions.first().isDisabled()),
+);
+await createdOptions.first().click();
+await page.waitForTimeout(200);
+check("D14 created sort applies and closes menu", (await page.locator(".menu-sort").count()) === 0);
+check(
+  "D15 global-scope label after sorting",
+  (await page.locator(".drive-scope").count()) === 1 &&
+    (await page.locator(".drive-scope").innerText()).includes("全库"),
+);
+await shot("05g-drive-sort-created");
+
+// --- D5. Folder upload shows a per-directory progress card ---
+await page.locator(".menu-anchor").first().hover();
+await page.waitForSelector(".menu-upload");
+await page.locator(".menu-upload .drive-menu-item", { hasText: "上传文件夹" }).click();
+await page.waitForSelector(".modal-backdrop .primary");
+await page.locator(".modal-backdrop .primary").click();
+await page.waitForSelector(".folder-progress");
+check(
+  "D16 folder upload shows per-directory progress",
+  (await page.locator(".folder-progress li").count()) >= 2,
+);
+await shot("07-folder-progress");
+await page.locator(".fp-close").click();
+
 // --- E. Logout flow + auto-switch ---
 // Select pan115 in the drive first, so logging it out must trigger auto-switch.
 await nav("我的网盘");
@@ -170,7 +242,7 @@ check("G2 drive empty state", (await page.locator(".drive-placeholder h3").inner
 await shot("10-drive-empty");
 await page.locator(".drive-placeholder .primary").click();
 await page.waitForSelector(".account-dialog");
-check("G3 dialog from drive empty shows 8 available", (await page.locator(".provider-tile:not(.connected)").count()) === 8);
+check("G3 dialog from drive empty shows 9 available", (await page.locator(".provider-tile:not(.connected)").count()) === 9);
 // login from drive context: no pill until actually connected (BUG 1)
 await page.locator(".provider-tile", { hasText: "夸克网盘" }).click();
 await page.waitForSelector(".account-dialog", { state: "detached" });

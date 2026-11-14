@@ -3,6 +3,7 @@
 type Provider =
   | "quark"
   | "baidu"
+  | "xunlei"
   | "pan115"
   | "pan123"
   | "c139"
@@ -13,6 +14,7 @@ type Provider =
 const ALL: Provider[] = [
   "quark",
   "baidu",
+  "xunlei",
   "pan115",
   "pan123",
   "c139",
@@ -29,6 +31,7 @@ const state = {
     pan115: "115会员_2046",
   } as Record<string, string>,
   calls: [] as { cmd: string; args: unknown }[],
+  uploads: [] as Record<string, unknown>[],
   refreshDelayMs: Number((window as any).__MOCK_SLOW__ || 0),
 };
 
@@ -65,6 +68,7 @@ const driveFiles = (prefix: string) => [
     size: 0,
     isDir: true,
     modified: 1762000000,
+    created: 1761000000,
     md5: "",
   },
   {
@@ -74,6 +78,7 @@ const driveFiles = (prefix: string) => [
     size: 0,
     isDir: true,
     modified: 1762100000,
+    created: 1761100000,
     md5: "",
   },
   {
@@ -83,6 +88,7 @@ const driveFiles = (prefix: string) => [
     size: 8_589_934_592,
     isDir: false,
     modified: 1762200000,
+    created: 1761200000,
     md5: "abc",
   },
   {
@@ -92,6 +98,7 @@ const driveFiles = (prefix: string) => [
     size: 524_288_000,
     isDir: false,
     modified: 1762300000,
+    created: 1761300000,
     md5: "def",
   },
 ];
@@ -130,7 +137,8 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
     return null;
   }
   if (cmd.startsWith("plugin:webview|")) return null;
-  if (cmd === "plugin:dialog|open") return null;
+  if (cmd === "plugin:dialog|open")
+    return args?.options?.directory ? "D:\\Pictures" : null;
   if (cmd === "snapshot") {
     return {
       accounts: ALL.map(account),
@@ -138,7 +146,7 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
       downloadDir: "D:\\Downloads",
       engineRunning: true,
       engineError: "",
-      uploads: [],
+      uploads: state.uploads,
       shares: [],
       settings: { ...settings },
     };
@@ -166,12 +174,89 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
   }
   if (cmd === "drive_list") {
     if (!state.loggedIn.baidu) throw "未登录，请先连接账号";
+    const base = args.path && args.path !== "/" ? args.path : "";
     return {
       accountId: "baidu-acc",
       path: args.path,
       page: args.page,
       hasMore: false,
-      files: driveFiles("baidu"),
+      files: driveFiles("baidu").map((file) => ({
+        ...file,
+        path: file.isDir ? `${base}/${file.name}` : file.path,
+      })),
+    };
+  }
+  if (cmd === "dir_list_all") {
+    if (args.provider === "baidu" && !state.loggedIn.baidu)
+      throw "未登录，请先连接账号";
+    if (args.provider !== "baidu" && !state.loggedIn[args.provider])
+      throw "未登录，请先连接账号";
+    const base = args.path && args.path !== "/" ? args.path : "";
+    const files = driveFiles(args.provider).map((file) => ({
+      ...file,
+      path: file.isDir ? `${base}/${file.name}` : file.path,
+    }));
+    return {
+      accountId: `${args.provider}-acc`,
+      path: args.path,
+      files,
+      total: files.length,
+      truncated: false,
+    };
+  }
+  if (cmd === "cloud_enqueue" || cmd === "drive_enqueue") {
+    const files = Array.isArray(args.files) ? args.files : [];
+    return files.map(() => ({ status: "downloading", error: "" }));
+  }
+  if (cmd === "upload_enqueue") {
+    const paths = Array.isArray(args.paths) ? args.paths : [];
+    const directory = String(args.directory ?? "/");
+    return paths.map((value) => {
+      const localPath = String(value);
+      const name = localPath.split(/[\\/]/).pop() || "file";
+      const base = directory === "/" ? "" : directory;
+      const index = state.uploads.length;
+      const status = index % 2 === 0 ? "complete" : "uploading";
+      const record = {
+        id: `upload-${index}`,
+        name,
+        localPath,
+        remotePath: `${base}/${name}`,
+        size: 100,
+        completed: status === "complete" ? 100 : 30,
+        status,
+        provider: args.provider,
+        concurrency: 2,
+      };
+      state.uploads.push(record);
+      return record;
+    });
+  }
+  if (cmd === "collect_local_files") {
+    const root = String(args.root ?? "");
+    return [
+      { path: `${root}\\a.txt`, relative: "" },
+      { path: `${root}\\sub\\b.txt`, relative: "sub" },
+      { path: `${root}\\sub\\deep\\c.txt`, relative: "sub/deep" },
+    ];
+  }
+  if (cmd === "drive_mkdir" || cmd === "drive_mkdir_at") {
+    return {
+      id: `dir-${Date.now()}`,
+      path: `${args.parent === "/" ? "" : args.parent}/${args.name}`,
+      name: args.name,
+      size: 0,
+      isDir: true,
+      modified: Math.floor(Date.now() / 1000),
+      created: Math.floor(Date.now() / 1000),
+      md5: "",
+    };
+  }
+  if (cmd === "drive_share") {
+    return {
+      url: "https://pan.baidu.com/s/1mockShare",
+      password: args.password,
+      period: args.period,
     };
   }
   // feat merge: settings + in-app updater.

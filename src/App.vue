@@ -3,10 +3,9 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import DrivePanel from "./DrivePanel.vue";
-import CloudDrivePanel from "./CloudDrivePanel.vue";
+import DriveExplorer from "./DriveExplorer.vue";
 import AccountDialog from "./AccountDialog.vue";
-import { type Provider, providers, providerName } from "./providers";
+import { type Provider, driveSummary, providers, providerName } from "./providers";
 import UploadPanel from "./UploadPanel.vue";
 import SharePanel from "./SharePanel.vue";
 import SettingsPanel from "./SettingsPanel.vue";
@@ -556,11 +555,7 @@ onUnmounted(() => {
           <p>
             {{
               tab === "drive"
-                ? driveProvider === "baidu"
-                  ? "浏览百度网盘文件，上传、下载和分享。"
-                  : driveProvider === "xunlei"
-                    ? "浏览迅雷网盘文件，上传或下载到本地。"
-                    : `浏览${providerName(driveProvider)}，选择文件或文件夹下载到本地。`
+                ? driveSummary(driveProvider)
                 : tab === "uploads"
                   ? "分片并发传输，随时掌握上传进度。"
                   : tab === "shares"
@@ -631,31 +626,14 @@ onUnmounted(() => {
             <Plus :size="14" />添加网盘
           </button>
         </div>
-        <DrivePanel
-          v-if="driveProvider === 'baidu'"
-          :download-dir="state.downloadDir"
-          @notice="notice"
-          @error="error = $event"
-          @login="login('baidu')"
-          @changed="refresh"
-          @directory="chooseDirectory"
-          @downloaded="
-            tab = 'all';
-            refresh();
-          "
-          @uploaded="
-            tab = 'uploads';
-            refresh();
-          "
-        />
-        <CloudDrivePanel
-          v-else
+        <DriveExplorer
           :key="driveProvider"
           :provider="driveProvider"
           :connected="accountFor(driveProvider).loggedIn"
           :download-dir="state.downloadDir"
           @login="login(driveProvider)"
           @notice="notice"
+          @error="error = $event"
           @changed="refresh"
           @directory="chooseDirectory"
           @busy="driveBusy = $event"

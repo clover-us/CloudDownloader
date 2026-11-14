@@ -5,6 +5,7 @@ export type DriveFile = {
   size: number;
   isDir: boolean;
   modified: number;
+  created: number;
   md5: string;
 };
 export type DriveListing = {

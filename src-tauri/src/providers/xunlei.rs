@@ -534,7 +534,33 @@ impl Session {
             size,
             is_dir: false,
             modified: now(),
+            created: now(),
             md5: gcid,
+        })
+    }
+
+    pub async fn xunlei_mkdir(&self, parent_id: &str, name: &str) -> Result<DriveFile, String> {
+        let captcha = self.captcha("POST:/drive/v1/files").await?;
+        let body = json!({
+            "kind": "drive#folder",
+            "parent_id": if parent_id == "0" { "" } else { parent_id },
+            "name": name,
+        });
+        let value = self.api_post("/files", &body, &captcha).await?;
+        let file = value.get("file").cloned().unwrap_or_else(|| value.clone());
+        let id = text(&file["id"]);
+        if id.is_empty() {
+            return Err("迅雷创建文件夹失败，请刷新网盘确认".into());
+        }
+        Ok(DriveFile {
+            id,
+            path: String::new(),
+            name: name.into(),
+            size: 0,
+            is_dir: true,
+            modified: now(),
+            created: now(),
+            md5: String::new(),
         })
     }
 
