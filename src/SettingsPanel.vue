@@ -44,8 +44,12 @@ const emit = defineEmits<{
   error: [message: string];
 }>();
 
+// 后端以 KiB/s 存储限速；界面以 MiB/s 展示与输入（与预设标签一致）。
+const toMib = (kib: number) => Math.round((kib / 1024) * 100) / 100;
+const maxLimitMib = Math.round((maxDownloadLimit / 1024) * 100) / 100;
+
 const draft = ref<Settings>({ ...props.settings });
-const limitInput = ref(props.settings.maxOverallDownloadLimit);
+const limitInput = ref(toMib(props.settings.maxOverallDownloadLimit));
 const concurrentInput = ref(props.settings.maxConcurrentDownloads);
 const uploadChunkInput = ref(props.settings.uploadChunkMib);
 const saving = ref(false);
@@ -54,7 +58,7 @@ watch(
   () => props.settings,
   (value) => {
     draft.value = { ...value };
-    limitInput.value = value.maxOverallDownloadLimit;
+    limitInput.value = toMib(value.maxOverallDownloadLimit);
     concurrentInput.value = value.maxConcurrentDownloads;
     uploadChunkInput.value = value.uploadChunkMib;
   },
@@ -67,12 +71,12 @@ async function apply(patch: Partial<Settings>) {
   try {
     const saved = await invoke<Settings>("settings_set", { settings: next });
     draft.value = { ...saved };
-    limitInput.value = saved.maxOverallDownloadLimit;
+    limitInput.value = toMib(saved.maxOverallDownloadLimit);
     concurrentInput.value = saved.maxConcurrentDownloads;
     emit("saved", saved);
   } catch (error) {
     draft.value = { ...props.settings };
-    limitInput.value = props.settings.maxOverallDownloadLimit;
+    limitInput.value = toMib(props.settings.maxOverallDownloadLimit);
     concurrentInput.value = props.settings.maxConcurrentDownloads;
     emit("error", String(error));
   } finally {
@@ -81,18 +85,19 @@ async function apply(patch: Partial<Settings>) {
 }
 
 function applyLimit() {
-  const parsed = Math.round(Number(limitInput.value) || 0);
-  const clamped = Math.min(Math.max(parsed, 0), maxDownloadLimit);
-  limitInput.value = clamped;
-  if (clamped !== draft.value.maxOverallDownloadLimit) {
-    void apply({ maxOverallDownloadLimit: clamped });
+  const parsedMib = Number(limitInput.value) || 0;
+  const clampedMib = Math.min(Math.max(parsedMib, 0), maxLimitMib);
+  limitInput.value = clampedMib;
+  const kib = Math.round(clampedMib * 1024);
+  if (kib !== draft.value.maxOverallDownloadLimit) {
+    void apply({ maxOverallDownloadLimit: kib });
   }
 }
 
-function setLimit(value: number) {
-  limitInput.value = value;
-  if (value !== draft.value.maxOverallDownloadLimit) {
-    void apply({ maxOverallDownloadLimit: value });
+function setLimit(kib: number) {
+  limitInput.value = toMib(kib);
+  if (kib !== draft.value.maxOverallDownloadLimit) {
+    void apply({ maxOverallDownloadLimit: kib });
   }
 }
 
@@ -263,13 +268,13 @@ function openRepository() {
             class="number-input"
             type="number"
             min="0"
-            :max="maxDownloadLimit"
-            step="128"
-            aria-label="全局下载限速（KiB/s）"
+            :max="maxLimitMib"
+            step="0.5"
+            aria-label="全局下载限速（MiB/s）"
             @change="applyLimit"
             @keydown.enter="applyLimit"
           />
-          <span class="unit">KiB/s</span>
+          <span class="unit">MiB/s</span>
         </div>
       </div>
       <div class="presets">
