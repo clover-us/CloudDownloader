@@ -153,7 +153,7 @@ pub fn decode115(payload: &str, key: &[u8; 16]) -> Result<serde_json::Value, Str
         return Err("115 返回的 RSA 响应长度无效".into());
     }
     let mut output = Vec::new();
-    for chunk in ciphertext.chunks_exact(128) {
+    for chunk in ciphertext.as_chunks::<128>().0 {
         let block = rsa(chunk)?;
         let at = block[2..]
             .iter()

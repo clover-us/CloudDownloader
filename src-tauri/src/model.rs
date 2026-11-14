@@ -274,6 +274,7 @@ pub struct Snapshot {
     pub engine_error: String,
     pub uploads: Vec<crate::upload::UploadView>,
     pub shares: Vec<CreatedShare>,
+    pub settings: crate::settings::Settings,
 }
 
 pub fn now() -> u64 {

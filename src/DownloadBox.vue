@@ -49,6 +49,7 @@ type Created = { status: string; error: string };
 const props = defineProps<{
   accounts: { provider: Provider; loggedIn: boolean }[];
   downloadDir: string;
+  defaultConnections: number;
 }>();
 const emit = defineEmits<{
   login: [provider: Provider];
@@ -65,7 +66,7 @@ const adding = ref(false);
 const error = ref("");
 const selected = ref<string[]>([]);
 const filename = ref("");
-const connections = ref(16);
+const connections = ref(props.defaultConnections || 16);
 const maxPeers = ref(64);
 const uploadLimit = ref(512);
 const seedMinutes = ref(0);
@@ -74,6 +75,12 @@ const input = ref<HTMLTextAreaElement | null>(null);
 let version = 0;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let pending: string | null = null;
+watch(
+  () => props.defaultConnections,
+  (value) => {
+    if (value && !adding.value) connections.value = value;
+  },
+);
 defineExpose({ focus: () => input.value?.focus() });
 const bytes = (n: number) => {
   if (!n) return "0 B";

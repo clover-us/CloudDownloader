@@ -30,8 +30,9 @@ export async function syncWindowTheme() {
   );
 }
 
-export async function toggleTheme() {
-  theme.value = theme.value === "night" ? "light" : "night";
+export async function setTheme(next: AppTheme) {
+  if (theme.value === next) return;
+  theme.value = next;
   applyTheme();
   try {
     localStorage.setItem(storageKey, theme.value);
@@ -39,4 +40,8 @@ export async function toggleTheme() {
     // Restricted storage must not prevent changing the current theme.
   }
   await syncWindowTheme();
+}
+
+export async function toggleTheme() {
+  await setTheme(theme.value === "night" ? "light" : "night");
 }

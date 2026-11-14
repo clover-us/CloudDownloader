@@ -1,10 +1,96 @@
 use crate::{model::Provider, pan115_session, quark::Quark};
-use tauri::{Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 // A registered window can be observed before its CookieManager restoration
 // finishes. All 115 callers must wait for the complete initialization sequence.
 static PAN115_INITIALIZATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static ILANZOU_DEVICE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+// Provider login pages are desktop layouts with their own minimum widths, and
+// each site ships its own scrollbar styling. Both are unified here: every
+// login window opens wide enough for its page at 100% zoom, and every
+// scrollbar uses the same thin rounded style.
+const SCROLLBAR_STYLE: &str = r#"
+(() => {
+  const css = `
+    *, *::before, *::after {
+      scrollbar-width: auto !important;
+      scrollbar-color: auto !important;
+    }
+    ::-webkit-scrollbar { display: block !important; width: 10px !important; height: 10px !important; background: transparent !important; }
+    ::-webkit-scrollbar-track { background: transparent !important; }
+    ::-webkit-scrollbar-thumb {
+      background-color: rgba(112, 124, 142, 0.45) !important;
+      border: 2px solid transparent !important;
+      border-radius: 6px !important;
+      background-clip: content-box !important;
+      min-height: 40px !important;
+    }
+    ::-webkit-scrollbar-thumb:hover { background-color: rgba(112, 124, 142, 0.72) !important; }
+    ::-webkit-scrollbar-corner { background: transparent !important; }
+    ::-webkit-scrollbar-button { display: none !important; width: 0 !important; height: 0 !important; }
+  `;
+  const apply = () => {
+    if (!document.documentElement) return;
+    try {
+      if (!document.adoptedStyleSheets.some((sheet) => sheet.__clouddownloader)) {
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync(css);
+        Object.defineProperty(sheet, '__clouddownloader', { value: true });
+        document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+      }
+      return;
+    } catch (error) {
+      // Older engines fall back to a plain style element below.
+    }
+    const id = 'clouddownloader-scrollbars';
+    let style = document.getElementById(id);
+    if (!style) {
+      style = document.createElement('style');
+      style.id = id;
+      (document.head || document.documentElement).appendChild(style);
+    }
+    style.textContent = css;
+  };
+  const schedule = () => {
+    apply();
+    setTimeout(apply, 300);
+    setTimeout(apply, 1200);
+    setTimeout(apply, 3000);
+  };
+  if (document.readyState === 'loading') {
+    addEventListener('DOMContentLoaded', schedule, { once: true });
+  } else {
+    schedule();
+  }
+  addEventListener('load', schedule, { once: true });
+  new MutationObserver(apply).observe(document.documentElement, { childList: true, subtree: false });
+})();"#;
+
+// Width each login page needs, measured on the live sites at 100% zoom, plus
+// room for the scrollbar. Rendering at the native size keeps the desktop
+// layout intact; a page that grows wider falls back to its own scrollbar.
+fn login_size(app: &tauri::AppHandle, provider: Provider) -> (f64, f64) {
+    let mut width: f64 = match provider {
+        Provider::Lanzou => 1024.0,
+        Provider::C139 => 1044.0,
+        Provider::Quark => 1072.0,
+        Provider::Pan115 => 1116.0,
+        Provider::Pan123 | Provider::Ilanzou => 1236.0,
+        Provider::Baidu => 1280.0,
+        Provider::Uc => 1296.0,
+        Provider::Xunlei => 1280.0,
+    };
+    if let Ok(Some(monitor)) = app.primary_monitor() {
+        let available = monitor
+            .size()
+            .to_logical::<f64>(monitor.scale_factor())
+            .width
+            - 48.0;
+        width = width.min(available.max(800.0));
+    }
+    (width, 740.0)
+}
 
 pub fn window(
     app: &tauri::AppHandle,
@@ -34,6 +120,7 @@ pub fn window(
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join(format!("{}-profile", provider.key()));
+    let (width, height) = login_size(app, provider);
     let window = WebviewWindowBuilder::new(
         app,
         label,
@@ -48,8 +135,9 @@ pub fn window(
         ),
     )
     .title(format!("登录{} · CloudDownloader", provider.name()))
-    .inner_size(1000.0, 740.0)
+    .inner_size(width, height)
     .min_inner_size(800.0, 600.0)
+    .initialization_script(SCROLLBAR_STYLE)
     .center()
     .visible(visible)
     .data_directory(path)
@@ -76,6 +164,9 @@ pub fn window(
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
             let _ = close.hide();
+            // The user dismissed the login prompt: let the main window stop
+            // showing "waiting for login" for this provider.
+            let _ = close.emit_to("main", "login-window-closed", provider.key());
         }
     });
     Ok(window)
@@ -274,6 +365,32 @@ pub fn save_before_exit(app: &tauri::AppHandle) -> Result<(), String> {
             .cookies()
             .map_err(|_| "无法读取退出前的 115 登录资料")?;
         persist_pan115(app, cookies)?;
+    }
+    Ok(())
+}
+
+/// Clear a provider's persisted login state so the account can be removed from
+/// the connected list. The hidden login window is kept alive (recreating it
+/// would restore the 115 cookie cache), but its browsing data is wiped and it
+/// is pointed back at the login page.
+pub fn forget(app: &tauri::AppHandle, provider: Provider) -> Result<(), String> {
+    let window = window(app, provider, false)?;
+    window
+        .clear_all_browsing_data()
+        .map_err(|e| format!("无法清除登录信息：{e}"))?;
+    if provider == Provider::Pan115 {
+        let path = cache_path(app)?;
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("无法清除 115 登录资料：{error}")),
+        }
+        if let Some(state) = app.try_state::<crate::AppState>() {
+            state.session_cache_error.lock().unwrap().clear();
+        }
+    }
+    if let Ok(url) = provider.login_url().parse() {
+        let _ = window.navigate(url);
     }
     Ok(())
 }
