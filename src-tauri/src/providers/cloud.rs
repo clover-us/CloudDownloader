@@ -133,6 +133,47 @@ pub fn parent_id(path: &str, provider: Provider) -> Result<String, String> {
         component_id(provider, last)
     }
 }
+/// Convert a provider timestamp (epoch seconds/milliseconds number, or an
+/// RFC 3339 / "YYYY-MM-DD HH:MM:SS" string) into epoch seconds. Returns 0 when
+/// the value is missing or cannot be parsed, so callers can use it as a
+/// best-effort fallback without failing the whole listing.
+fn timestamp_seconds(raw: &Value) -> u64 {
+    if let Some(value) = raw.as_u64() {
+        return if value > 1_000_000_000_000 {
+            value / 1000
+        } else {
+            value
+        };
+    }
+    let Some(text) = raw.as_str() else {
+        return 0;
+    };
+    let text = text.trim();
+    if text.is_empty() {
+        return 0;
+    }
+    if let Ok(value) = chrono::DateTime::parse_from_rfc3339(text) {
+        return value.timestamp().max(0) as u64;
+    }
+    for pattern in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"] {
+        if let Ok(value) = chrono::NaiveDateTime::parse_from_str(text, pattern) {
+            return value.and_utc().timestamp().max(0) as u64;
+        }
+    }
+    0
+}
+
+/// Pick the first key present in `raw` whose value parses to a real timestamp.
+fn entry_timestamp(raw: &Value, keys: &[&str]) -> u64 {
+    for key in keys {
+        let seconds = timestamp_seconds(&raw[*key]);
+        if seconds > 0 {
+            return seconds;
+        }
+    }
+    0
+}
+
 pub fn entry(provider: Provider, raw: &Value, parent: &str) -> Result<Entry, String> {
     let (id, name, size, is_dir, modified, hash) = match provider {
         Provider::Quark | Provider::Uc => (
@@ -160,7 +201,7 @@ pub fn entry(provider: Provider, raw: &Value, parent: &str) -> Result<Entry, Str
             text(&raw["FileName"]),
             number(&raw["Size"]),
             number(&raw["Type"]) == 1,
-            0,
+            entry_timestamp(raw, &["UpdateAt", "CreateAt"]),
             text(&raw["Etag"]),
         ),
         Provider::C139 => (
@@ -168,7 +209,7 @@ pub fn entry(provider: Provider, raw: &Value, parent: &str) -> Result<Entry, Str
             text(&raw["name"]),
             number(&raw["size"]),
             raw["type"].as_str() == Some("folder"),
-            0,
+            entry_timestamp(raw, &["updateTime", "createTime", "modifiedTime"]),
             text(&raw["md5"]),
         ),
         Provider::Xunlei => (
@@ -176,7 +217,7 @@ pub fn entry(provider: Provider, raw: &Value, parent: &str) -> Result<Entry, Str
             text(&raw["name"]),
             number(&raw["size"]),
             text(&raw["kind"]) == "drive#folder",
-            0,
+            entry_timestamp(raw, &["modified_time", "created_time"]),
             text(&raw["hash"]),
         ),
         _ => return Err("此网盘使用专用文件接口".into()),
