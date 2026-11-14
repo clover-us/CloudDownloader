@@ -957,25 +957,64 @@ async fn poll_engine(app: tauri::AppHandle) {
                     task.speed = 0;
                 }
             }
+            let mut retry: Option<Task> = None;
             if task.status == "error" {
                 let code = value["errorCode"].as_str().unwrap_or("未知");
-                task.error = download_errors::message(
-                    code,
-                    value["errorMessage"].as_str().unwrap_or_default(),
-                    task.direct.is_some(),
-                );
+                let detail = value["errorMessage"].as_str().unwrap_or_default();
+                task.error = download_errors::message(code, detail, task.direct.is_some());
+                if let Some(current) = task.direct.as_ref().map(|s| s.connections) {
+                    if let Some(next) = retry_connections(current, code, detail) {
+                        if let Some(source) = &mut task.direct {
+                            source.connections = next;
+                        }
+                        task.status = "resolving".into();
+                        task.error.clear();
+                        task.gid = None;
+                        task.speed = 0;
+                        task.connections = 0;
+                        retry = Some(task.clone());
+                    }
+                }
             }
             let store = state.store.lock().unwrap();
-            if store
-                .tasks()
-                .unwrap_or_default()
-                .iter()
-                .any(|t| t.id == task.id && t.gid == task.gid && t.status == before_status)
+            if retry.is_some()
+                || store
+                    .tasks()
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|t| t.id == task.id && t.gid == task.gid && t.status == before_status)
             {
                 let _ = store.save(&task);
             }
+            drop(store);
+            if let Some(task) = retry {
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    let state = handle.state::<AppState>();
+                    let _ = start_task(&handle, &state, task, None, None).await;
+                });
+            }
         }
         let _ = app.emit_to("main", "tasks-changed", ());
+    }
+}
+
+/// aria2 on Windows occasionally fails a TLS handshake when sixteen connections
+/// open at once ("SSL/TLS handshake failure: Error: 操作成功完成。(0)"): the engine
+/// reports error 1 with nothing transferred, while the very same link downloads
+/// fine a moment later with fewer connections. Links handed over by the browser
+/// land on CDNs that do this, so a direct task walks down 16 → 8 → 4 → 1 before
+/// the failure is shown. Every other failure keeps its one-shot behaviour.
+fn retry_connections(connections: u8, code: &str, detail: &str) -> Option<u8> {
+    if code != "1" || !detail.contains("SSL/TLS") {
+        return None;
+    }
+    match connections {
+        16 => Some(8),
+        8 => Some(4),
+        4 => Some(1),
+        _ => None,
     }
 }
 
@@ -1216,4 +1255,26 @@ pub fn run() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::retry_connections;
+
+    const TLS: &str = "SSL/TLS handshake failure: Error: 操作成功完成。(0)";
+
+    #[test]
+    fn tls_failures_walk_down_the_connection_ladder() {
+        assert_eq!(retry_connections(16, "1", TLS), Some(8));
+        assert_eq!(retry_connections(8, "1", TLS), Some(4));
+        assert_eq!(retry_connections(4, "1", TLS), Some(1));
+        assert_eq!(retry_connections(1, "1", TLS), None);
+    }
+
+    #[test]
+    fn other_failures_are_left_alone() {
+        assert_eq!(retry_connections(16, "1", "timeout"), None);
+        assert_eq!(retry_connections(16, "22", TLS), None);
+        assert_eq!(retry_connections(16, "9", TLS), None);
+    }
 }

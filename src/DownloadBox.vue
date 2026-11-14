@@ -74,7 +74,13 @@ const adding = ref(false);
 const error = ref("");
 const selected = ref<string[]>([]);
 const filename = ref("");
-const connections = ref(props.defaultConnections || 16);
+/**
+ * Direct links start at eight connections, not the cloud default of sixteen:
+ * some CDNs drop a TLS handshake when that many open at once, and the engine
+ * only has to walk a failed task down through 8 → 4 → 1 when it starts this low.
+ */
+const directConnections = (value: number) => Math.min(value || 16, 8);
+const connections = ref(directConnections(props.defaultConnections));
 const maxPeers = ref(64);
 const uploadLimit = ref(512);
 const seedMinutes = ref(0);
@@ -86,7 +92,7 @@ let pending: string | null = null;
 watch(
   () => props.defaultConnections,
   (value) => {
-    if (value && !adding.value) connections.value = value;
+    if (value && !adding.value) connections.value = directConnections(value);
   },
 );
 defineExpose({ focus: () => input.value?.focus(), receive });
