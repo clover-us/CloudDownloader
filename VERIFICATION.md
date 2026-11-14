@@ -1,6 +1,6 @@
-# CloudDownloader 0.6.1 验证记录
+# CloudDownloader 0.6.3 验证记录
 
-验证日期：2026-11-14，Asia/Shanghai。发布版本：[v0.6.1](https://github.com/clover-us/CloudDownloader/releases/tag/v0.6.1)，提供 Windows 安装版、便携版与 SHA-256 校验文件。上一版验证见 [0.6.0](docs/verification-0.6.0.md)，更新内容见 [0.6.1 更新说明](docs/release-0.6.1.md)。
+验证日期：2026-11-14，Asia/Shanghai。发布版本：[v0.6.3](https://github.com/clover-us/CloudDownloader/releases/tag/v0.6.3)，提供 Windows 安装版、便携版与 SHA-256 校验文件。上一版验证见 [0.6.2](docs/release-0.6.2.md)，本版更新内容见 [0.6.3 更新说明](docs/release-0.6.3.md)。本记录在 0.6.1 登录窗口验证的基础上，补充 0.6.3 的迅雷网盘与「修改时间」修复。
 
 ## 本次修改
 
@@ -49,8 +49,7 @@
 ## 构建与交付
 
 - `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 与 `cargo test --lib` 通过：69 passed / 0 failed / 1 ignored（需要真实分享链接的用例被忽略）。
-- `npm run build`（`vue-tsc` + Vite 生产构建）通过：1917 modules，CSS 33.66 kB、JS 179.68 kB。
-- 带签名的 Windows release 与 NSIS 构建通过，打包脚本核对了主程序版本资源（0.6.1.0）；最终交付的安装包由 makensis 重编译并单独签名，`.sig` 与 `latest.json` 中的签名一致。
-- 交付文件：package/CloudDownloader.exe（11.01 MiB）、package/CloudDownloader_0.6.1_x64-setup.exe（5.66 MiB）、package/CloudDownloader_0.6.1_x64-setup.exe.sig、package/CloudDownloader-0.6.1-win-x64.zip（7.38 MiB）、package/SHA256SUMS-0.6.1.txt、package/latest.json。
-- 安装包 SHA-256 `e0ee09d6474cf60be972b2d3fbb43ed577f67337df493b62fb11deb43674ab02`，便携 ZIP SHA-256 `407fef88b95cbbd390ebe4ba095e31e88d9ac5844e2ed9473c4d1446134eee94`，与 SHA256SUMS-0.6.1.txt 一致。
-- 本轮未安装或卸载用户已有的 0.6.0 应用，升级路径留给发布后的自动更新验证。
+- `npm run build`（`vue-tsc` + Vite 生产构建）通过。
+- 带签名的 Windows release 与 NSIS 构建通过，打包脚本核对了主程序版本资源（0.6.3.0）；最终交付的安装包由 makensis 重编译并单独签名，`.sig` 与 `latest.json` 中的签名一致。
+- 交付文件见 GitHub Release [v0.6.3](https://github.com/clover-us/CloudDownloader/releases/tag/v0.6.3)：`CloudDownloader_0.6.3_x64-setup.exe`、便携包 `CloudDownloader-0.6.3-win-x64.zip`、`SHA256SUMS-0.6.3.txt` 与 `latest.json`。
+- 本轮未安装或卸载用户已有的 0.6.x 应用，升级路径留给发布后的自动更新验证。

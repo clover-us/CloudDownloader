@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/sclliang/CloudDownloader/releases/latest"><img src="https://img.shields.io/github/v/release/sclliang/CloudDownloader?style=flat-square&amp;label=Release&amp;color=2278E5" alt="最新正式版本" /></a>
+  <a href="https://github.com/clover-us/CloudDownloader/releases/latest"><img src="https://img.shields.io/github/v/release/clover-us/CloudDownloader?style=flat-square&amp;label=Release&amp;color=2278E5" alt="最新正式版本" /></a>
   <img src="https://img.shields.io/badge/Windows-10%20%2F%2011%20%C2%B7%20x64-2278E5?style=flat-square" alt="Windows 10 / 11 x64" />
   <img src="https://img.shields.io/badge/Theme-Light%20%2F%20Night-2278E5?style=flat-square" alt="蓝白日间与 Night 主题" />
 </p>
@@ -27,12 +27,12 @@
 
 ## 下载
 
-最新版本 **0.6.1**：网盘登录窗口按页面宽度等比缩放，右侧内容不再被裁切；设置中心与自动更新沿用 0.6.0。
+最新版本 **0.6.3**：新增迅雷网盘（支持个人网盘浏览、下载与上传，排在百度网盘之后），并修复 123 / 139 / 迅雷及蓝奏系列「修改时间」不显示的问题。
 
 | Windows 安装版 · 推荐                 | 便携版                                 |
 | :------------------------------------ | :------------------------------------- |
 | 自动创建快捷方式，适合日常使用。      | 解压即可运行，保留完整目录结构。       |
-| **[↓ 下载 v0.6.1 安装包][installer]** | **[↓ 下载 v0.6.1 便携 ZIP][portable]** |
+| **[↓ 下载 v0.6.3 安装包][installer]** | **[↓ 下载 v0.6.3 便携 ZIP][portable]** |
 
 [全部版本与更新说明][releases] · [SHA-256 校验文件][checksums]
 
@@ -63,7 +63,7 @@
 | **九个网盘**            | 浏览个人文件、解析分享、进入子文件夹、选择文件或文件夹下载。     |
 | **多连接与续传**        | HTTP / HTTPS 最多 16 路连接，支持分段检测、暂停、继续与重试。    |
 | **BT 磁力与种子**       | 支持 v1 / 混合种子、选文件下载、节点数设置、上传限速和可选做种。 |
-| **百度上传与分享**      | 分片上传、拖放文件、新建文件夹、创建分享与管理本机分享记录。     |
+| **上传与分享**          | 百度分片上传、创建分享与管理本机分享记录；迅雷网盘分片上传；支持拖放文件与新建文件夹。 |
 | **日间 / Night 双主题** | 右上角一键切换并记住选择；关闭窗口后可在托盘继续下载。           |
 | **设置中心**            | 下载目录、全局限速、同时下载数与默认连接数，改动即时生效。       |
 | **应用内自动更新**      | 启动时检查新版本，下载签名校验通过的安装包并自动重启完成升级。   |
@@ -138,7 +138,7 @@ npm run tauri dev -- --no-watch
 
 ## 文档与致谢
 
-[使用指南](docs/usage.md) · [开发文档](docs/development.md) · [验证记录](VERIFICATION.md) · [更新说明](docs/release-0.6.1.md) · [第三方许可](third-party/notices/)
+[使用指南](docs/usage.md) · [开发文档](docs/development.md) · [验证记录](VERIFICATION.md) · [更新说明](docs/release-0.6.3.md) · [第三方许可](third-party/notices/)
 
 界面布局与蓝白配色参考 [Motrix](https://github.com/agalwood/Motrix)，保留本项目的统一下载入口与多网盘工作区。
 
@@ -146,7 +146,7 @@ npm run tauri dev -- --no-watch
 
 <p align="center"><sub>sixunited · 作者 <a href="https://github.com/sclliang">sclliang</a></sub></p>
 
-[installer]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.1/CloudDownloader_0.6.1_x64-setup.exe
-[portable]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.1/CloudDownloader-0.6.1-win-x64.zip
-[checksums]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.1/SHA256SUMS-0.6.1.txt
+[installer]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.3/CloudDownloader_0.6.3_x64-setup.exe
+[portable]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.3/CloudDownloader-0.6.3-win-x64.zip
+[checksums]: https://github.com/clover-us/CloudDownloader/releases/download/v0.6.3/SHA256SUMS-0.6.3.txt
 [releases]: https://github.com/clover-us/CloudDownloader/releases
