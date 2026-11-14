@@ -27,6 +27,9 @@ pub const MIN_SPLIT_MIB: u8 = 1;
 pub const MAX_SPLIT_MIB: u8 = 64;
 pub const DEFAULT_SPLIT_MIB: u8 = 1;
 
+/// 浏览器扩展连接的端口下限：低端口多为系统保留，扩展也用不上。
+pub const MIN_BRIDGE_PORT: u16 = 1024;
+
 /// 关闭主窗口时的行为。
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -68,6 +71,8 @@ pub struct Settings {
     pub min_split_mib: u8,
     /// 浏览器扩展把下载接力给本机时使用的开关（关闭后不再接受请求）。
     pub browser_bridge: bool,
+    /// 浏览器扩展连接的端口，扩展选项里的端口需要与此一致。
+    pub bridge_port: u16,
 }
 
 impl Default for Settings {
@@ -84,6 +89,7 @@ impl Default for Settings {
             upload_part_concurrency: DEFAULT_UPLOAD_PART_CONCURRENCY,
             min_split_mib: DEFAULT_SPLIT_MIB,
             browser_bridge: true,
+            bridge_port: crate::bridge::DEFAULT_PORT,
         }
     }
 }
@@ -156,6 +162,14 @@ impl Settings {
         if let Some(value) = store.setting("browser_bridge") {
             settings.browser_bridge = value != "0";
         }
+        if let Some(value) = store
+            .setting("bridge_port")
+            .and_then(|value| value.parse::<u16>().ok())
+        {
+            if value >= MIN_BRIDGE_PORT {
+                settings.bridge_port = value;
+            }
+        }
         settings
     }
 
@@ -207,6 +221,12 @@ impl Settings {
             return Err(format!(
                 "最小分段大小需要在 {}–{} MiB 之间",
                 MIN_SPLIT_MIB, MAX_SPLIT_MIB
+            ));
+        }
+        if self.bridge_port < MIN_BRIDGE_PORT {
+            return Err(format!(
+                "浏览器接力的端口需要在 {}–65535 之间",
+                MIN_BRIDGE_PORT
             ));
         }
         Ok(())
@@ -267,6 +287,7 @@ pub fn save(store: &crate::store::Store, settings: &Settings) -> Result<Settings
         "browser_bridge",
         if settings.browser_bridge { "1" } else { "0" },
     )?;
+    store.set_setting("bridge_port", &settings.bridge_port.to_string())?;
     Ok(settings.clone())
 }
 
@@ -308,6 +329,20 @@ mod tests {
         changed.auto_check_updates = false;
         save(&store, &changed).unwrap();
         assert_eq!(Settings::load(&store), changed);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn the_bridge_port_round_trips_and_rejects_reserved_ports() {
+        let (store, path) = store();
+        let dir = std::env::temp_dir();
+        let mut changed = valid(&dir.to_string_lossy());
+        changed.bridge_port = 18890;
+        save(&store, &changed).unwrap();
+        assert_eq!(Settings::load(&store).bridge_port, 18890);
+
+        changed.bridge_port = 80;
+        assert!(save(&store, &changed).is_err());
         let _ = std::fs::remove_file(path);
     }
 

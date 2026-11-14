@@ -12,6 +12,7 @@ export type Settings = {
   uploadPartConcurrency: number;
   minSplitMib: number;
   browserBridge: boolean;
+  bridgePort: number;
 };
 
 /** 与 src-tauri/src/settings.rs 中的常量保持一致。 */
@@ -32,6 +33,10 @@ export const maxUploadPartConcurrency = 16;
 /** aria2 最小分段大小（MiB）。与后端常量一致。 */
 export const minSplitMib = 1;
 export const maxSplitMib = 64;
+/** 浏览器接力的监听端口范围。与后端常量一致。 */
+export const minBridgePort = 1024;
+export const maxBridgePort = 65535;
+export const defaultBridgePort = 17890;
 
 export const limitPresets = [
   { label: "不限速", value: 0 },
@@ -52,4 +57,5 @@ export const defaultSettings: Settings = {
   uploadPartConcurrency: 4,
   minSplitMib: 1,
   browserBridge: true,
+  bridgePort: defaultBridgePort,
 };

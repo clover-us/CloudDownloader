@@ -29,6 +29,8 @@ import {
   maxUploadChunkMib,
   maxUploadConcurrency,
   maxUploadPartConcurrency,
+  maxBridgePort,
+  minBridgePort,
   minSplitMib,
   minUploadChunkMib,
   minUploadConcurrency,
@@ -107,6 +109,7 @@ const uploadChunkInput = ref(props.settings.uploadChunkMib);
 const uploadConcurrentInput = ref(props.settings.uploadConcurrency);
 const uploadPartConcurrentInput = ref(props.settings.uploadPartConcurrency);
 const minSplitInput = ref(props.settings.minSplitMib);
+const portInput = ref(props.settings.bridgePort);
 
 function syncInputs(value: Settings) {
   draft.value = { ...value };
@@ -116,6 +119,7 @@ function syncInputs(value: Settings) {
   uploadConcurrentInput.value = value.uploadConcurrency;
   uploadPartConcurrentInput.value = value.uploadPartConcurrency;
   minSplitInput.value = value.minSplitMib;
+  portInput.value = value.bridgePort;
 }
 
 function sameSettings(a: Settings, b: Settings) {
@@ -130,7 +134,8 @@ function sameSettings(a: Settings, b: Settings) {
     a.uploadConcurrency === b.uploadConcurrency &&
     a.uploadPartConcurrency === b.uploadPartConcurrency &&
     a.minSplitMib === b.minSplitMib &&
-    a.browserBridge === b.browserBridge
+    a.browserBridge === b.browserBridge &&
+    a.bridgePort === b.bridgePort
   );
 }
 
@@ -230,6 +235,17 @@ function applyMinSplit() {
   if (clamped !== draft.value.minSplitMib) {
     void apply({ minSplitMib: clamped });
   }
+}
+
+/** 端口改动立即让桥重新绑定，随后刷新状态能看到新的端口。 */
+async function applyPort() {
+  const parsed = Math.round(Number(portInput.value) || 0);
+  const clamped = Math.min(Math.max(parsed, minBridgePort), maxBridgePort);
+  portInput.value = clamped;
+  if (clamped !== draft.value.bridgePort) {
+    await apply({ bridgePort: clamped });
+  }
+  await refreshBridge();
 }
 
 type StepperField =
@@ -540,6 +556,26 @@ function openRepository() {
             关闭
           </button>
         </div>
+      </div>
+      <div class="divider"></div>
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>监听端口</strong>
+          <small>扩展选项里的端口要与此一致；改动后桥会立即换端口</small>
+        </div>
+        <span class="number-field">
+          <input
+            v-model.number="portInput"
+            class="number-input"
+            type="number"
+            :min="minBridgePort"
+            :max="maxBridgePort"
+            step="1"
+            aria-label="浏览器接力的监听端口"
+            @change="applyPort"
+            @keydown.enter="applyPort"
+          />
+        </span>
       </div>
       <div class="divider"></div>
       <div class="setting-row">

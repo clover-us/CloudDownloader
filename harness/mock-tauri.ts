@@ -132,6 +132,7 @@ const settings = {
   uploadPartConcurrency: 4,
   minSplitMib: 1,
   browserBridge: true,
+  bridgePort: 17890,
 };
 
 const account = (p: Provider) =>
@@ -466,12 +467,24 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
       rangeSupported: true,
     };
   }
+  // Starting a download returns the task the backend created; the real command
+  // answers with the same shape, so the list only refreshes afterwards.
+  if (cmd === "enqueue_direct" || cmd === "enqueue_bt") {
+    const name =
+      String(args.filename ?? "").trim() ||
+      String(args.url ?? "")
+        .split("/")
+        .pop()
+        ?.split("?")[0] ||
+      "下载任务";
+    return task(`created-${state.calls.length}`, name, "resolving", 0, 0, 0);
+  }
   // feat merge: settings + in-app updater.
   if (cmd === "settings_get") return { ...settings };
   if (cmd === "bridge_status")
     return {
       listening: true,
-      port: 17890,
+      port: settings.bridgePort,
       enabled: settings.browserBridge,
       last: state.lastHandoff,
     };

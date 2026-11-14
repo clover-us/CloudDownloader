@@ -536,6 +536,21 @@ await page.waitForFunction(() =>
   document.querySelector(".settings")?.textContent?.includes("example.com"),
 );
 check("J1c settings shows the last hand-off", true);
+// Moving the port has to reach the backend and show up in the state line.
+const portInput = page.getByLabel("浏览器接力的监听端口");
+await portInput.fill("17891");
+await portInput.press("Enter");
+await page.waitForFunction(() =>
+  document.querySelector(".settings")?.textContent?.includes("127.0.0.1:17891"),
+);
+const portCall = await mock("lastCall", "settings_set");
+check(
+  "J1d settings moves the bridge port",
+  portCall?.args?.settings?.bridgePort === 17891,
+  JSON.stringify(portCall?.args?.settings?.bridgePort),
+);
+await portInput.fill("17890");
+await portInput.press("Enter");
 await shot("14-settings");
 
 // --- I. Loading state (slow refresh survives reload via init script) ---

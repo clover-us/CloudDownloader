@@ -12,18 +12,20 @@ use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU16, Ordering},
         Mutex,
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-/// Fixed port so the extension needs no discovery. A second copy of the app
-/// cannot bind it, and that is fine: the first one is the one that answers.
-pub const PORT: u16 = 17890;
+/// Default port, matching the one the extension asks for. The user can change
+/// it in settings, so the listener watches [`PORT`] instead of a constant.
+pub const DEFAULT_PORT: u16 = 17890;
 const MAX_HEAD: usize = 8 * 1024;
 const MAX_BODY: usize = 64 * 1024;
 
+/// The port the socket should be on. The listener rebinds when it changes.
+static PORT: AtomicU16 = AtomicU16::new(DEFAULT_PORT);
 /// Whether the socket is open, so the settings page can say so.
 static LISTENING: AtomicBool = AtomicBool::new(false);
 /// The last request that arrived, so a hand-off that did not show up can be
@@ -76,34 +78,65 @@ pub struct BridgeStatus {
 pub fn status(enabled: bool) -> BridgeStatus {
     BridgeStatus {
         listening: LISTENING.load(Ordering::Relaxed),
-        port: PORT,
+        port: PORT.load(Ordering::Relaxed),
         enabled,
         last: LAST.lock().ok().and_then(|last| last.clone()),
     }
 }
 
+/// Asks the listener to move to another port; it rebinds within a moment.
+/// Called after the settings are saved, so the extension keeps working when the
+/// user picks a different port.
+pub fn set_port(port: u16) {
+    PORT.store(port, Ordering::Relaxed);
+}
+
 /// Starts the bridge on a background thread. A failed bind only costs the
 /// extension path, so the failure is reported and startup continues.
 pub fn start(app: tauri::AppHandle) {
-    let listener = match TcpListener::bind(("127.0.0.1", PORT)) {
-        Ok(listener) => listener,
-        Err(error) => {
-            eprintln!("clouddownloader: 浏览器扩展桥未启动（127.0.0.1:{PORT}）：{error}");
-            return;
+    std::thread::spawn(move || serve(app));
+}
+
+fn serve(app: tauri::AppHandle) {
+    let mut bound: Option<(u16, TcpListener)> = None;
+    loop {
+        let wanted = PORT.load(Ordering::Relaxed);
+        if bound.as_ref().map(|(port, _)| *port) != Some(wanted) {
+            bound = None;
+            LISTENING.store(false, Ordering::Relaxed);
+            match TcpListener::bind(("127.0.0.1", wanted)) {
+                Ok(listener) => {
+                    let _ = listener.set_nonblocking(true);
+                    LISTENING.store(true, Ordering::Relaxed);
+                    bound = Some((wanted, listener));
+                }
+                Err(error) => {
+                    eprintln!("clouddownloader: 浏览器扩展桥未启动（127.0.0.1:{wanted}）：{error}");
+                }
+            }
         }
-    };
-    LISTENING.store(true, Ordering::Relaxed);
-    std::thread::spawn(move || {
-        for stream in listener.incoming().flatten() {
-            let app = app.clone();
-            std::thread::spawn(move || {
-                let _ = answer(stream, &app);
-            });
+        match bound.as_ref() {
+            Some((_, listener)) => match listener.accept() {
+                Ok((stream, _)) => {
+                    let app = app.clone();
+                    std::thread::spawn(move || {
+                        let _ = answer(stream, &app);
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(_) => std::thread::sleep(Duration::from_millis(500)),
+            },
+            // Nothing to accept: wait, then try the port again.
+            None => std::thread::sleep(Duration::from_secs(2)),
         }
-    });
+    }
 }
 
 fn answer(mut stream: TcpStream, app: &tauri::AppHandle) -> std::io::Result<()> {
+    // Streams accepted from a non-blocking listener start non-blocking too.
+    let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
     let (head, body) = match read_request(&mut stream) {

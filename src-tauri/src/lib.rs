@@ -232,6 +232,9 @@ async fn settings_set(
         saved.upload_concurrency as usize,
         (saved.upload_concurrency as usize * saved.upload_part_concurrency as usize).max(1),
     );
+    // Moving the bridge to another port keeps the extension working; the
+    // listener rebinds on its own thread.
+    crate::bridge::set_port(saved.bridge_port);
     Ok(saved)
 }
 
@@ -1162,6 +1165,7 @@ pub fn run() {
             // The extension posts whole browser downloads here. Only a failed
             // bind (another copy already listening) is ignored: the protocol
             // hand-off keeps working without it.
+            bridge::set_port(preferences.bridge_port);
             bridge::start(app.handle().clone());
             // Cold start: this process was launched by the protocol itself, so the
             // link is queued for the front end instead of showing an empty window.
