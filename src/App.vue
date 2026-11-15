@@ -178,6 +178,9 @@ let unlisten: UnlistenFn | undefined;
 let unlistenLoginClosed: UnlistenFn | undefined;
 let unlistenHandoff: UnlistenFn | undefined;
 let loadingSnapshot = false;
+/** A refresh asked for while one was in flight must not be dropped, otherwise the
+ * UI keeps showing stale rows until the next unrelated event. */
+let refreshQueued = false;
 const activeStatuses = ["active", "waiting", "resolving", "seeding"];
 const completed = computed(() =>
   state.value.tasks.filter((t) => t.status === "complete"),
@@ -455,7 +458,10 @@ function notice(message: string) {
   toastTimer = setTimeout(() => (toast.value = ""), 4500);
 }
 async function refresh() {
-  if (loadingSnapshot) return;
+  if (loadingSnapshot) {
+    refreshQueued = true;
+    return;
+  }
   loadingSnapshot = true;
   try {
     state.value = await invoke<Snapshot>("snapshot");
@@ -473,6 +479,10 @@ async function refresh() {
     error.value = String(e);
   } finally {
     loadingSnapshot = false;
+    if (refreshQueued) {
+      refreshQueued = false;
+      void refresh();
+    }
   }
 }
 async function login(provider: Provider) {

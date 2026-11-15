@@ -837,6 +837,8 @@ impl Session {
             names,
             cancelled: false,
             provider: self.provider.key().into(),
+            items: Vec::new(),
+            code_mode: code_mode.into(),
         })
     }
 
@@ -902,6 +904,8 @@ impl Session {
                 },
                 cancelled: false,
                 provider: self.provider.key().into(),
+                items: Vec::new(),
+                code_mode: "auto".into(),
             });
         }
         Ok(shares)

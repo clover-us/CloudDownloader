@@ -466,6 +466,8 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
       names,
       cancelled: false,
       provider,
+      codeMode,
+      items: (args.files as Record<string, unknown>[] | undefined) ?? [],
     };
     state.shares.push(share);
     return share;
@@ -478,7 +480,20 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
     const file = args.file as Record<string, unknown>;
     return { ...file, name: args.newName };
   }
-  if (cmd === "drive_cancel_share") {
+  if (cmd === "drive_reshare") {
+    const old = state.shares.find((item) => item.id === args.id);
+    if (!old) throw "分享记录不存在";
+    const next = {
+      ...old,
+      id: `${String(old.id)}-again`,
+      url: String(old.url).replace("/s/", "/s/again-"),
+      cancelled: false,
+      createdAt: Math.floor(Date.now() / 1000),
+    };
+    state.shares = state.shares.filter((item) => item.id !== args.id);
+    state.shares.push(next);
+    return next;
+  }  if (cmd === "drive_cancel_share") {
     const share = state.shares.find((item) => item.id === args.id);
     if (!share) throw "分享记录不存在，请刷新后重试";
     share.cancelled = true;

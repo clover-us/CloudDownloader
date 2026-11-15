@@ -8,6 +8,7 @@ import {
   LoaderCircle,
   Pause,
   RefreshCw,
+  RotateCcw,
   Share2,
   Trash2,
 } from "@lucide/vue";
@@ -39,6 +40,8 @@ const forgetting = computed(() =>
   props.shares.filter((s) => forgetIds.value.includes(s.id)),
 );
 const syncing = ref(false);
+/** Id of the record currently being shared again. */
+const sharing = ref("");
 const active = ref(props.providers[0]?.id ?? "");
 /**
  * Records written before this version carry no provider, so they stay visible
@@ -100,6 +103,20 @@ function askCancelSelected() {
 async function cancelOne(s: CreatedShare) {
   await invoke("drive_cancel_share", { id: s.id });
 }
+/** Share the same files again; the provider cannot revive the stopped link. */
+async function reshare(s: CreatedShare) {
+  if (sharing.value) return;
+  sharing.value = s.id;
+  try {
+    await invoke("drive_reshare", { id: s.id });
+    emit("notice", "已重新创建分享，旧链接仍然失效");
+    emit("changed");
+  } catch (e) {
+    emit("error", String(e));
+  } finally {
+    sharing.value = "";
+  }
+}
 async function cancel() {
   const targets = batchCancel.value
     ? cancellable.value
@@ -155,6 +172,40 @@ function closeDialog() {
   batchCancel.value = false;
   forgetIds.value = [];
   mode.value = "";
+}
+/** Rows being forgotten that still have a live link on the provider. */
+const liveForget = computed(() => forgetting.value.filter(live));
+/** Stop the live links first, then drop every selected row. */
+async function forgetStopped() {
+  if (!forgetIds.value.length) return;
+  busy.value = true;
+  let stopped = 0;
+  try {
+    for (const s of liveForget.value) {
+      try {
+        await cancelOne(s);
+        stopped += 1;
+      } catch {
+        // A link that cannot be stopped (already gone, provider issue) should
+        // not block forgetting the row; count what actually stopped.
+      }
+    }
+    await invoke("drive_forget_share", { ids: forgetIds.value });
+    const count = forgetIds.value.length;
+    closeDialog();
+    batch.value = [];
+    emit("changed");
+    emit(
+      "notice",
+      stopped
+        ? `已停止 ${stopped} 个分享并删除 ${count} 条记录`
+        : `已删除 ${count} 条分享记录`,
+    );
+  } catch (e) {
+    emit("error", String(e));
+  } finally {
+    busy.value = false;
+  }
 }
 /** Forget the row(s) locally; providers keep the link alive. */
 async function forget() {
@@ -331,8 +382,6 @@ onMounted(() => void sync(true));
             :title="`在浏览器中打开 ${s.url}`"
             @click.prevent="open(s)"
             >{{ s.url }}</a
-          ><span v-if="s.password" class="share-code"
-            >提取码：{{ s.password }}</span
           >
         </div>
         <div class="task-meta share-meta">
@@ -364,6 +413,17 @@ onMounted(() => void sync(true));
           </button>
         </template>
         <button
+          v-else-if="s.items?.length"
+          class="icon-button"
+          title="继续分享"
+          aria-label="继续分享"
+          :disabled="sharing === s.id"
+          @click="reshare(s)"
+        >
+          <LoaderCircle v-if="sharing === s.id" :size="17" class="spinning" />
+          <RotateCcw v-else :size="17" />
+        </button>
+        <button
           class="icon-button"
           title="删除记录"
           aria-label="删除分享记录"
@@ -391,11 +451,21 @@ onMounted(() => void sync(true));
           <p>
             只删除本机的记录；如果链接在网盘上仍然有效，删除后依旧可以访问，需要让它失效请用「停止分享」。
           </p>
+          <p v-if="liveForget.length" class="dialog-hint">
+            其中 {{ liveForget.length }} 条仍在分享中，直接删除会让这些链接失去管理入口。
+          </p>
           <div class="button-row">
             <button class="secondary" :disabled="busy" @click="closeDialog">
               返回</button
+            ><button
+              v-if="liveForget.length"
+              class="danger"
+              :disabled="busy"
+              @click="forgetStopped"
+            >
+              {{ busy ? "正在处理…" : "停止并删除" }}</button
             ><button class="danger" :disabled="busy" @click="forget">
-              {{ busy ? "正在删除…" : "删除记录" }}
+              {{ busy ? "正在删除…" : "只删除记录" }}
             </button>
           </div>
         </template>

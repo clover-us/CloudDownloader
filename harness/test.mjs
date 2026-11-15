@@ -1112,6 +1112,15 @@ await page.evaluate(() => {
       id: "share-live",
       url: "https://pan.quark.cn/s/1liveShare",
       password: "aaaa",
+      items: [
+        {
+          id: "fid-live",
+          path: "/电影合集.zip",
+          name: "电影合集.zip",
+          isDir: false,
+        },
+      ],
+      codeMode: "auto",
       period: 7,
       createdAt: Math.floor(Date.now() / 1000),
       accountId: "quark-account",
@@ -1204,7 +1213,37 @@ check(
       "已取消",
     ),
 );
-const shareLinks = page.locator("article.share-record a.share-link");
+const quarkRowText = await page
+  .locator("article.share-record")
+  .first()
+  .innerText();
+check(
+  "S5b the passcode stays out of the row",
+  !quarkRowText.includes("提取码"),
+  quarkRowText.replace(/\s+/g, " ").slice(0, 120),
+);
+await page
+  .locator('article.share-record button[aria-label="继续分享"]')
+  .first()
+  .click();
+await page.waitForFunction(() => window.__MOCK__.lastCall("drive_reshare"));
+const reshareCall = await mock("lastCall", "drive_reshare");
+check(
+  "S5c a stopped share can be shared again",
+  reshareCall?.args?.id === "share-live",
+  JSON.stringify(reshareCall?.args),
+);
+// The recreated record is appended, not kept in place, so look at every row.
+await page.waitForFunction(() =>
+  Array.from(
+    document.querySelectorAll("article.share-record a.share-link"),
+  ).some((link) => (link.textContent ?? "").includes("again-")),
+);
+check(
+  "S5d the new link replaces the stopped row",
+  (await page.locator("article.share-record .status-pill.complete").count()) ===
+    1,
+);const shareLinks = page.locator("article.share-record a.share-link");
 check(
   "S6 share link is a clickable link to the share page",
   (await shareLinks.count()) === 2 &&
@@ -1261,26 +1300,31 @@ const forgetDialog = (
   await page.locator(".confirm-dialog").innerText()
 ).replace(/\s+/g, " ");
 check(
-  "S9 deleting a share record asks before forgetting it",
+  "S9 deleting a live share offers to stop it first",
   forgetDialog.includes("删除这条分享记录？") &&
-    forgetDialog.includes("停止分享"),
-  forgetDialog.slice(0, 140),
+    forgetDialog.includes("停止并删除") &&
+    forgetDialog.includes("只删除记录"),
+  forgetDialog.slice(0, 160),
 );
-await page.locator(".confirm-dialog button", { hasText: "删除记录" }).click();
-await page.waitForFunction(() =>
-  window.__MOCK__.lastCall("drive_forget_share"),
+await page
+  .locator(".confirm-dialog button", { hasText: "停止并删除" })
+  .click();
+await page.waitForFunction(
+  () => window.__MOCK__.lastCall("drive_forget_share"),
 );
 const forgetCall = await mock("lastCall", "drive_forget_share");
+const stopThenForget = await mock("lastCall", "drive_cancel_share");
 await page.waitForFunction(
   () => document.querySelectorAll("article.share-record").length === 0,
 );
 check(
-  "S10 forgetting removes the row without touching the provider",
+  "S10 stop-and-forget revokes the link before dropping the row",
   ((forgetCall?.args?.ids ?? [])).includes("share-xunlei") &&
+    stopThenForget?.args?.id === "share-xunlei" &&
     (await page.evaluate(() =>
       window.__MOCK__.state.shares.some((s) => s.id === "share-xunlei"),
     )) === false,
-  JSON.stringify(forgetCall?.args),
+  JSON.stringify({ forgetCall: forgetCall?.args, stop: stopThenForget?.args }),
 );
 
 // --- N. Title bar plugin button ---

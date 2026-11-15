@@ -299,6 +299,18 @@ pub struct DriveListing {
     pub files: Vec<DriveFile>,
 }
 
+/// A file that was handed to a share endpoint. Kept with the share so the
+/// record can be shared again after it was stopped.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareItem {
+    pub id: String,
+    pub path: String,
+    pub name: String,
+    #[serde(default)]
+    pub is_dir: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreatedShare {
@@ -315,6 +327,12 @@ pub struct CreatedShare {
     /// before this field existed, so it defaults to an empty string.
     #[serde(default)]
     pub provider: String,
+    /// Files behind the link, used to share the same selection again.
+    #[serde(default)]
+    pub items: Vec<ShareItem>,
+    /// How the passcode was chosen: `custom`, `auto` or `none`.
+    #[serde(default)]
+    pub code_mode: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -361,6 +361,8 @@ impl Session {
             names: fresh.iter().map(|f| f.name.clone()).collect(),
             cancelled: false,
             provider: self.provider.key().into(),
+            items: Vec::new(),
+            code_mode: code_mode.into(),
         })
     }
 
@@ -429,6 +431,8 @@ impl Session {
                     names,
                     cancelled: false,
                     provider: self.provider.key().into(),
+                    items: Vec::new(),
+                    code_mode: "auto".into(),
                 });
             }
             if items.len() < 100 {

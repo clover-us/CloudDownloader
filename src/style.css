@@ -2176,6 +2176,10 @@ button.directory:hover {
   line-height: 1.8;
   overflow-wrap: anywhere;
 }
+.confirm-dialog .dialog-hint {
+  font-size: 12px;
+  color: var(--danger);
+}
 .cloud-dialog label.share-code-toggle {
   flex-direction: row;
   align-items: center;

@@ -695,6 +695,8 @@ impl Session {
             names,
             cancelled: false,
             provider: self.provider.key().into(),
+            items: Vec::new(),
+            code_mode: code_mode.into(),
         })
     }
 
@@ -744,6 +746,8 @@ impl Session {
                     .as_str()
                     .is_some_and(|status| status.eq_ignore_ascii_case("cancelled")),
                 provider: self.provider.key().into(),
+                items: Vec::new(),
+                code_mode: "auto".into(),
             });
         }
         Ok(shares)

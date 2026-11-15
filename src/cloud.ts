@@ -45,6 +45,10 @@ export type CreatedShare = {
   cancelled: boolean;
   /** Provider key; empty for records saved before the field existed. */
   provider?: string;
+  /** Files behind the link, kept so a stopped share can be created again. */
+  items?: { id: string; path: string; name: string; isDir?: boolean }[];
+  /** `custom`, `auto` or `none`; empty for records saved before it existed. */
+  codeMode?: string;
 };
 export const formatBytes = (n: number) => {
   if (!n) return "0 B";

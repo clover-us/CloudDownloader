@@ -398,7 +398,7 @@ pub async fn drive_share(
         _ => "auto",
     };
     let session = session::connect(&app, provider).await?;
-    let share = match provider {
+    let mut share = match provider {
         Provider::Baidu => {
             session
                 .drive_share(&account_id, &files, period, &password, code_mode)
@@ -420,6 +420,17 @@ pub async fn drive_share(
         }
         _ => return Err("该网盘暂不支持创建分享".into()),
     };
+    // Remember what went into the link so 继续分享 can rebuild the selection.
+    share.items = files
+        .iter()
+        .map(|file| ShareItem {
+            id: file.id.clone(),
+            path: file.path.clone(),
+            name: file.name.clone(),
+            is_dir: file.is_dir,
+        })
+        .collect();
+    share.code_mode = code_mode.to_string();
     state.store.lock().unwrap().save_share(&share)?;
     Ok(share)
 }
@@ -483,8 +494,86 @@ pub async fn drive_cancel_share(
     Ok(())
 }
 
+/// Share the same selection again after the link was stopped. Providers delete a
+/// stopped link for good, so this hands the stored files to the share endpoint
+/// once more and replaces the record with the new link.
+#[tauri::command]
+pub async fn drive_reshare(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<CreatedShare, String> {
+    trusted(&window)?;
+    let old = state
+        .store
+        .lock()
+        .unwrap()
+        .shares()?
+        .into_iter()
+        .find(|share| share.id == id)
+        .ok_or("分享记录不存在")?;
+    if old.items.is_empty() {
+        return Err("这条记录里没有文件清单，无法继续分享，请在文件列表里重新选择".into());
+    }
+    let provider = share_provider(&old).ok_or("无法判断这条分享属于哪个网盘，请先刷新分享记录")?;
+    let files: Vec<DriveFile> = old
+        .items
+        .iter()
+        .map(|item| DriveFile {
+            id: item.id.clone(),
+            path: item.path.clone(),
+            name: item.name.clone(),
+            size: 0,
+            is_dir: item.is_dir,
+            modified: 0,
+            created: 0,
+            md5: String::new(),
+        })
+        .collect();
+    let code_mode = match old.code_mode.as_str() {
+        "custom" | "none" => old.code_mode.as_str(),
+        _ => "auto",
+    };
+    let session = session::connect(&app, provider).await?;
+    let mut share = match provider {
+        Provider::Baidu => {
+            session
+                .drive_share(
+                    &old.account_id,
+                    &files,
+                    old.period,
+                    &old.password,
+                    code_mode,
+                )
+                .await?
+        }
+        Provider::Quark => {
+            if session.cloud_identity().await?.0 != old.account_id {
+                return Err("网盘账号已切换，请重新选择文件".into());
+            }
+            session.cloud_share(&files, old.period, code_mode).await?
+        }
+        Provider::Xunlei => {
+            if session.cloud_identity().await?.0 != old.account_id {
+                return Err("网盘账号已切换，请重新选择文件".into());
+            }
+            session
+                .xunlei_create_share(&files, old.period, code_mode)
+                .await?
+        }
+        _ => return Err("该网盘暂不支持创建分享".into()),
+    };
+    share.items = old.items;
+    share.code_mode = code_mode.to_string();
+    let store = state.store.lock().unwrap();
+    store.remove_share(&old.id)?;
+    store.save_share(&share)?;
+    Ok(share)
+}
+
 /// Drop local share records. The link itself is untouched on the provider, so
-/// this only forgets the row in 分享记录; use 取消分享 to revoke it.
+/// this only forgets the row in 分享记录; use 停止分享 to revoke it.
 #[tauri::command]
 pub async fn drive_forget_share(
     window: WebviewWindow,
@@ -979,6 +1068,8 @@ mod tests {
             names: vec!["文件".into()],
             cancelled: false,
             provider: provider.into(),
+            items: Vec::new(),
+            code_mode: "auto".into(),
         }
     }
 
