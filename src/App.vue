@@ -1501,15 +1501,6 @@ onUnmounted(() => {
                     {{ row.task.bt.maxPeers }} · 上传
                     {{ bytes(row.task.uploadSpeed || 0) }}/s
                   </p>
-                  <p v-if="row.task.direct" class="direct-task-detail">
-                    {{
-                      row.task.direct.rangeSupported
-                        ? row.task.status === "active"
-                          ? `${row.task.connections || 0} 路连接 · 最多 ${row.task.direct.connections} 路`
-                          : `支持分段 · 最多 ${row.task.direct.connections} 路连接`
-                        : "单连接 · 服务器不支持分段，恢复时从头下载"
-                    }}
-                  </p>
                   <p v-if="row.task.error" class="task-error">
                     {{ row.task.error }}
                   </p>

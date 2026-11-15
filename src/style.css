@@ -316,6 +316,12 @@ p {
   border-radius: 16px;
   box-shadow: var(--shadow);
 }
+/* A full-bleed card stretches the task rows too far apart on wide monitors. */
+.main-content:not(.drive-workspace) > * {
+  width: 100%;
+  max-width: 940px;
+  margin-inline: auto;
+}
 .page-header {
   display: flex;
   align-items: center;
