@@ -1223,7 +1223,7 @@ check(
   quarkRowText.replace(/\s+/g, " ").slice(0, 120),
 );
 await page
-  .locator('article.share-record button[aria-label="继续分享"]')
+  .locator('article.share-record button[aria-label="重新分享"]')
   .first()
   .click();
 await page.waitForFunction(() => window.__MOCK__.lastCall("drive_reshare"));

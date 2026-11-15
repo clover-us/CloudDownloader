@@ -420,7 +420,7 @@ pub async fn drive_share(
         }
         _ => return Err("该网盘暂不支持创建分享".into()),
     };
-    // Remember what went into the link so 继续分享 can rebuild the selection.
+    // Remember what went into the link so 重新分享 can rebuild the selection.
     share.items = files
         .iter()
         .map(|file| ShareItem {
@@ -514,7 +514,7 @@ pub async fn drive_reshare(
         .find(|share| share.id == id)
         .ok_or("分享记录不存在")?;
     if old.items.is_empty() {
-        return Err("这条记录里没有文件清单，无法继续分享，请在文件列表里重新选择".into());
+        return Err("这条记录里没有文件清单，无法重新分享，请在文件列表里重新选择".into());
     }
     let provider = share_provider(&old).ok_or("无法判断这条分享属于哪个网盘，请先刷新分享记录")?;
     let files: Vec<DriveFile> = old

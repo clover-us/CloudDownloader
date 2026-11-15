@@ -415,8 +415,8 @@ onMounted(() => void sync(true));
         <button
           v-else-if="s.items?.length"
           class="icon-button"
-          title="继续分享"
-          aria-label="继续分享"
+          title="重新分享"
+          aria-label="重新分享"
           :disabled="sharing === s.id"
           @click="reshare(s)"
         >
