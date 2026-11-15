@@ -17,6 +17,15 @@ Chromium. `vite.config.ts` here disables the file watcher (`watch: null`)
 because editor atomic-write temp dirs crash chokidar with EBUSY on Windows;
 tests reload the page fresh, so HMR is not needed.
 
+## README screenshots
+
+`node harness/readme-shots.mjs` (same dev server) regenerates the two images
+shown in the top-level README — `docs/images/download-light.png` (light theme,
+全部任务) and `docs/images/drive-night.png` (Night theme, 我的网盘 / 百度网盘).
+It seeds a representative state (nine connected drives, direct/BT/cloud tasks)
+and writes straight into `docs/images/`. Re-run it after UI changes that affect
+those views.
+
 ## Coverage
 
 Connected-only account rows, add-account dialog (search / sections / tiles),

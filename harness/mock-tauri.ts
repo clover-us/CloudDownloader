@@ -233,7 +233,7 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
     return {
       accounts: ALL.map(account),
       tasks: state.tasks.map((task) => ({ ...task })),
-      downloadDir: "D:\\Downloads",
+      downloadDir: settings.downloadDir,
       engineRunning: true,
       engineError: "",
       uploads: state.uploads.map((upload) => ({ ...upload })),

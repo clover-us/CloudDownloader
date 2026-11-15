@@ -471,7 +471,7 @@ async function openDataDirectory() {
 }
 
 function openRepository() {
-  void openUrl("https://github.com/sclliang/CloudDownloader");
+  void openUrl("https://github.com/clover-us/CloudDownloader");
 }
 </script>
 
@@ -1080,7 +1080,7 @@ function openRepository() {
           <small>问题反馈与版本说明</small>
         </div>
         <button class="secondary" @click="openRepository">
-          <ExternalLink :size="15" />sclliang/CloudDownloader
+          <ExternalLink :size="15" />clover-us/CloudDownloader
         </button>
       </div>
     </section>
