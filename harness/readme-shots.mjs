@@ -46,7 +46,7 @@ await page.waitForFunction(() =>
   ),
 );
 
-// Seed a representative 0.7.8 state: all nine drives connected, three download
+// Seed a representative state: all nine drives connected, three download
 // sources (direct link, BT, personal-drive file), and the README download dir.
 await page.evaluate(async () => {
   const s = window.__MOCK__.state;

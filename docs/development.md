@@ -50,7 +50,7 @@ powershell -ExecutionPolicy Bypass -File scripts/updater-key.ps1
 
 发布新版本的步骤：
 
-1. 同步升级 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 中的版本号，并在 `docs/release-<版本>.md` 写明更新说明。
+1. 同步升级 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 中的版本号，并在 `docs/release-<版本>.md` 写明更新说明。`scripts/check-release-docs.ps1` 会校验三处版本号一致、更新说明存在，以及 README / 使用指南 / 验证记录里的版本与下载链接都指向该版本；`build.ps1` 开始时会自动执行，也可单独运行。
 2. 执行 `scripts/build.ps1`。脚本会读取 `~/.tauri/clouddownloader.key`（或 `TAURI_SIGNING_PRIVATE_KEY`），构建 NSIS 安装包，对 `package/` 中最终交付的安装包重新签名，并生成 `.sig` 与 `package/latest.json`；清单里的更新说明默认取自 `docs/release-<版本>.md`。
 3. 在 GitHub 创建 `v<版本>` Release，上传 `package/` 下的 `CloudDownloader_<版本>_x64-setup.exe`、同名 `.sig`、`latest.json`，以及 `CloudDownloader-<版本>-win-x64.zip` 与 `SHA256SUMS-<版本>.txt`。
 4. `latest.json` 中的 `url` 指向该 Release 的安装包地址，客户端只会接受与公钥匹配的签名。

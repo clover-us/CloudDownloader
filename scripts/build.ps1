@@ -6,6 +6,7 @@ $running = Get-Process clouddownloader -ErrorAction SilentlyContinue | Where-Obj
 if ($running) { throw '请先从托盘菜单退出正在运行的 CloudDownloader，再执行打包。' }
 Push-Location $projectRoot
 try {
+    & (Join-Path $PSScriptRoot 'check-release-docs.ps1')
     if (-not (Test-Path 'node_modules')) {
         npm.cmd ci
         if ($LASTEXITCODE -ne 0) { throw 'npm ci 失败' }
