@@ -751,9 +751,12 @@ const currentHandoff = computed(() => pendingHandoffs.value[0] ?? null);
 
 async function takeHandoff() {
   const link = pendingHandoffs.value[0];
-  if (!link || !downloadBox.value) return;
+  if (!link) return;
+  // Switch to the download page first: on the upload tab the box is not mounted,
+  // so the old guard on downloadBox.value made the button do nothing at all.
   tab.value = "all";
   await nextTick();
+  if (!downloadBox.value) return;
   // 确认即入队开始下载，不再停在下载框里等第二次点击。只有入队后才把这条
   // 接力从横幅里移除，避免解析失败时提示和链接一起消失。
   await downloadBox.value.receive(link, true);
