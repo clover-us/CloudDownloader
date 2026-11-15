@@ -322,6 +322,9 @@ impl Rpc {
             .await
             .map(|_| ())
     }
+    /// 无附加选项的投递，只给测试与 `--verify-*` 自检用；正式下载走
+    /// `add_cloud` / `add_with_options`，因此 release 构建里不需要它。
+    #[cfg(any(test, debug_assertions))]
     pub async fn add(
         &self,
         url: &str,
