@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { openPath } from "@tauri-apps/plugin-opener";
 import {
   CircleAlert,
   CircleCheck,
@@ -93,7 +92,7 @@ const state = computed(() => {
 
 async function openFolder() {
   try {
-    await openPath(folder.value);
+    await invoke("open_extension_folder");
   } catch (error) {
     emit("notice", `打不开扩展目录：${String(error)}`);
   }
@@ -150,6 +149,10 @@ onMounted(refresh);
         <div class="plugin-row">
           <span>最近一次接力</span>
           <b>{{ status?.last ? status.last.site || "未知站点" : "还没有" }}</b>
+        </div>
+        <div class="plugin-row">
+          <span>扩展目录</span>
+          <b class="plugin-path" :title="folder">{{ folder || "未知" }}</b>
         </div>
       </div>
 
@@ -263,6 +266,13 @@ onMounted(refresh);
 }
 .plugin-row span {
   color: var(--muted);
+}
+.plugin-path {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
 }
 .plugin-row b {
   font-weight: 600;

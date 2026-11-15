@@ -305,6 +305,21 @@ fn extension_folder(window: WebviewWindow, app: tauri::AppHandle) -> Result<Stri
         .ok_or_else(|| "找不到扩展目录，请重新安装应用".to_string())
 }
 
+/// 在资源管理器里打开扩展目录。
+///
+/// 走系统 shell 而不是 opener 插件：插件的 scope 只对少数根目录放行，安装到
+/// 自定义路径时会被判成 "Not allowed to open path"。
+#[tauri::command]
+fn open_extension_folder(window: WebviewWindow, app: tauri::AppHandle) -> Result<(), String> {
+    trusted(&window)?;
+    let path = extension_dir(&app).ok_or_else(|| "找不到扩展目录，请重新安装应用".to_string())?;
+    std::process::Command::new("explorer")
+        .arg(plain_path(&path))
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("打不开扩展目录：{error}"))
+}
+
 /// Windows returns verbatim paths (`\\?\D:\...`) from canonicalize and from the
 /// resource directory; the opener plugin refuses them and Explorer shows them
 /// oddly, so hand the webview the ordinary form.
@@ -1276,6 +1291,7 @@ pub fn run() {
             take_handoff,
             bridge_status,
             extension_folder,
+            open_extension_folder,
             enqueue,
             direct_commands::enqueue_direct,
             download_commands::inspect_download,
