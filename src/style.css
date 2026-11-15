@@ -316,10 +316,10 @@ p {
   border-radius: 16px;
   box-shadow: var(--shadow);
 }
-/* A full-bleed card stretches the task rows too far apart on wide monitors. */
+/* One content column for every list page: rows kept compact on wide monitors. */
 .main-content:not(.drive-workspace) > * {
   width: 100%;
-  max-width: 940px;
+  max-width: 820px;
   margin-inline: auto;
 }
 .page-header {
@@ -2073,17 +2073,13 @@ button.directory:hover {
 .share-link-text a:focus-visible {
   border-bottom-color: currentColor;
 }
-.share-meta {
-  display: flex;
-  gap: 6px;
-  margin-top: 6px;
-  color: var(--muted);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
+/* Share and upload rows list plain facts, so nothing is pinned to the right. */
+.task-meta.share-meta span:last-child,
+.task-meta.upload-meta span:last-child {
+  margin-left: 0;
 }
-/* The share rows read better a bit narrower than the download task list. */
-.main-content.shares-workspace > * {
-  max-width: 840px;
+.task-meta.share-meta {
+  margin-top: 6px;
 }
 /* Dialogs share the same surface, spacing and form treatment. */
 .modal-backdrop {

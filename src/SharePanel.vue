@@ -265,7 +265,7 @@ onMounted(() => void sync(true));
           @change="toggle(s.id)"
         />
       </label>
-      <div class="task-file-icon"><Share2 :size="22" /></div>
+      <div class="task-file-icon"><Share2 :size="25" /></div>
       <div class="task-details">
         <div class="task-name-row">
           <strong :title="s.names.join('、')">{{ s.names.join("、") }}</strong
@@ -283,7 +283,7 @@ onMounted(() => void sync(true));
           ><span v-if="s.password">提取码：{{ s.password }}</span
           ><span v-else>无需提取码</span>
         </div>
-        <div class="share-meta">
+        <div class="task-meta share-meta">
           <span>创建于 {{ formatDate(s.createdAt) }}</span>
           <span>· {{ formatSharePeriod(s.period) }}</span>
         </div>
@@ -295,14 +295,14 @@ onMounted(() => void sync(true));
           aria-label="复制分享"
           @click="copy(s)"
         >
-          <Copy :size="16" /></button
+          <Copy :size="17" /></button
         ><button
           class="icon-button"
           title="取消分享"
           aria-label="取消分享"
           @click="askCancel(s)"
         >
-          <X :size="16" />
+          <X :size="17" />
         </button>
       </div>
     </article>

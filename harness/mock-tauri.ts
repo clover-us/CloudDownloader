@@ -358,7 +358,7 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
       const name = localPath.split(/[\\/]/).pop() || "file";
       const base = directory === "/" ? "" : directory;
       const index = state.uploads.length;
-      const status = index % 2 === 0 ? "complete" : "uploading";
+      const status = index % 2 === 0 ? "complete" : "active";
       const record = {
         id: `upload-${index}`,
         name,

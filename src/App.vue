@@ -958,7 +958,6 @@ onUnmounted(() => {
       class="main-content"
       :class="{
         'drive-workspace': tab === 'drive',
-        'shares-workspace': tab === 'shares',
         'task-workspace': ['all', 'active', 'complete', 'error'].includes(tab),
       }"
     >

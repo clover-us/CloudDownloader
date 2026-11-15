@@ -498,7 +498,7 @@ async function removeSelected() {
               }"
             />
           </div>
-          <div class="task-meta">
+          <div class="task-meta upload-meta">
             <span class="provider-tag">{{
               providerName(row.task.provider as Provider)
             }}</span
