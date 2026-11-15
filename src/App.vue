@@ -337,14 +337,30 @@ const unitCounts = computed(() => {
   return counts;
 });
 const selectedSet = computed(() => new Set(selected.value));
+// The selectable units are the rows the list actually shows: one entry per
+// folder (its children count with it) or per standalone download. Selecting
+// every matching task used to tick files hidden inside collapsed folders.
+const rowTasks = computed(() => {
+  const groups: Task[][] = [];
+  for (const row of rows.value) {
+    if (row.kind === "group") groups.push(row.group.tasks);
+    else if (!row.child) groups.push([row.task]);
+  }
+  return groups;
+});
 const allSelected = computed(
   () =>
-    !!tasks.value.length &&
-    tasks.value.every((t) => selectedSet.value.has(t.id)),
+    !!rowTasks.value.length &&
+    rowTasks.value.every((list) =>
+      list.every((task) => selectedSet.value.has(task.id)),
+    ),
 );
 const someSelected = computed(
   () =>
-    !allSelected.value && tasks.value.some((t) => selectedSet.value.has(t.id)),
+    !allSelected.value &&
+    rowTasks.value.some((list) =>
+      list.some((task) => selectedSet.value.has(task.id)),
+    ),
 );
 function toggleTask(id: string) {
   selected.value = selectedSet.value.has(id)
@@ -352,7 +368,9 @@ function toggleTask(id: string) {
     : [...selected.value, id];
 }
 function toggleSelectAll() {
-  selected.value = allSelected.value ? [] : tasks.value.map((t) => t.id);
+  selected.value = allSelected.value
+    ? []
+    : rowTasks.value.flat().map((task) => task.id);
 }
 function groupSelected(group: TaskGroup) {
   const ids = group.tasks.map((t) => t.id);
@@ -732,12 +750,14 @@ async function receiveHandoff() {
 const currentHandoff = computed(() => pendingHandoffs.value[0] ?? null);
 
 async function takeHandoff() {
-  const link = pendingHandoffs.value.shift();
-  if (!link) return;
+  const link = pendingHandoffs.value[0];
+  if (!link || !downloadBox.value) return;
   tab.value = "all";
   await nextTick();
-  // 确认即入队开始下载，不再停在下载框里等第二次点击。
-  await downloadBox.value?.receive(link, true);
+  // 确认即入队开始下载，不再停在下载框里等第二次点击。只有入队后才把这条
+  // 接力从横幅里移除，避免解析失败时提示和链接一起消失。
+  await downloadBox.value.receive(link, true);
+  pendingHandoffs.value.shift();
 }
 
 async function openHandoffLink() {
@@ -750,10 +770,12 @@ async function openHandoffLink() {
   }
 }
 async function browseHandoff() {
-  const link = pendingHandoffs.value.shift();
+  const link = pendingHandoffs.value[0];
   if (!link) return;
   try {
     await invoke("open_in_browser", { url: link.url });
+    // 交给浏览器成功后再出队：打开失败时按钮要能重试。
+    pendingHandoffs.value.shift();
   } catch (failure) {
     notice(String(failure));
   }
@@ -775,12 +797,26 @@ function ignoreHandoff() {
 }
 onMounted(async () => {
   await refresh();
-  unlisten = await listen("tasks-changed", refresh);
-  unlistenLoginClosed = await listen<string>("login-window-closed", (event) => {
-    void cancelLogin(event.payload as Provider);
-  });
-  unlistenHandoff = await listen("handoff", () => void receiveHandoff());
-  await receiveHandoff();
+  // Subscriptions and the first hand-off read can fail (for example while the
+  // backend is still starting). If they threw, everything below was skipped and
+  // accountsReady stayed false, leaving the window on a spinner forever.
+  try {
+    unlisten = await listen("tasks-changed", refresh);
+    unlistenLoginClosed = await listen<string>(
+      "login-window-closed",
+      (event) => {
+        void cancelLogin(event.payload as Provider);
+      },
+    );
+    unlistenHandoff = await listen("handoff", () => void receiveHandoff());
+  } catch (failure) {
+    error.value = String(failure);
+  }
+  try {
+    await receiveHandoff();
+  } catch (failure) {
+    error.value = String(failure);
+  }
   await Promise.all(providers.map((p) => checkAccount(p.id, true)));
   accountsReady.value = true;
   if (state.value.settings.autoCheckUpdates)
@@ -929,7 +965,7 @@ onUnmounted(() => {
             <span
               v-if="['all', 'active', 'complete', 'error'].includes(tab)"
               class="page-count"
-              >{{ tasks.length }}</span
+              >{{ topLevelCount }}</span
             >
           </div>
           <p>

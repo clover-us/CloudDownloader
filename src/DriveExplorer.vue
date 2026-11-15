@@ -475,6 +475,8 @@ async function load(target?: string | Trail[], more = false) {
   if (!more) {
     searchResults.value = null;
     searchTruncated.value = false;
+    // A search that this load superseded will never reset its own spinner.
+    searching.value = false;
   }
   try {
     if (isBaidu.value) {
@@ -607,7 +609,9 @@ async function search() {
     searchTruncated.value = false;
     return;
   }
-  const current = revision;
+  // Bump the revision like load() does: a stale search result must not
+  // overwrite a newer listing, and the lock must be released when a load takes over.
+  const current = ++revision;
   searching.value = true;
   error.value = "";
   try {
@@ -858,11 +862,14 @@ function stopFolderPolling() {
 async function pollFolder() {
   stopFolderPolling();
   const steps = folderSteps.value;
-  if (!steps) return;
+  if (!steps || disposed) return;
   try {
     const snapshot = await invoke<{
       uploads: { remotePath: string; status: string }[];
     }>("snapshot");
+    // The panel can be unmounted while this request is in flight; rescheduling
+    // afterwards kept a detached component polling every second forever.
+    if (disposed) return;
     const uploads = snapshot.uploads ?? [];
     for (const step of steps) {
       if (
@@ -899,6 +906,7 @@ async function pollFolder() {
       folderTimer = window.setTimeout(() => void pollFolder(), 900);
     }
   } catch {
+    if (disposed) return;
     folderTimer = window.setTimeout(() => void pollFolder(), 1500);
   }
 }

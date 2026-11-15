@@ -35,8 +35,12 @@ function cookieHeader(cookies) {
 async function handOff(url, filename, referrer) {
   const { port } = await settings();
   // A blob:/data: download has no URL the app could fetch, so it never gets here.
-  if (!/^https?:/i.test(url)) throw new Error("只支持 HTTP/HTTPS 直链");
-  const cookies = await chrome.cookies.getAll({ url });
+  // A magnet link cannot be fetched either and carries no cookies, but the app
+  // accepts it as a BT task, so it is forwarded without header enrichment.
+  const isMagnet = /^magnet:/i.test(url);
+  if (!isMagnet && !/^https?:/i.test(url))
+    throw new Error("只支持 HTTP/HTTPS 直链与磁力链接");
+  const cookies = isMagnet ? [] : await chrome.cookies.getAll({ url });
   let response;
   try {
     response = await fetch(`http://127.0.0.1:${port}/add`, {
@@ -45,9 +49,9 @@ async function handOff(url, filename, referrer) {
       body: JSON.stringify({
         url,
         filename: filename || undefined,
-        referrer: referrer || undefined,
+        referrer: isMagnet ? undefined : referrer || undefined,
         cookie: cookies.length ? cookieHeader(cookies) : undefined,
-        userAgent: navigator.userAgent,
+        userAgent: isMagnet ? undefined : navigator.userAgent,
       }),
     });
   } catch {
