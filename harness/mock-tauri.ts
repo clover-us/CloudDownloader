@@ -357,6 +357,7 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
       const localPath = String(value);
       const name = localPath.split(/[\\/]/).pop() || "file";
       const base = directory === "/" ? "" : directory;
+      const destination = args.destination ? String(args.destination) : "";
       const index = state.uploads.length;
       const status = index % 2 === 0 ? "complete" : "active";
       const record = {
@@ -364,6 +365,7 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
         name,
         localPath,
         remotePath: `${base}/${name}`,
+        destination,
         size: 100,
         completed: status === "complete" ? 100 : 30,
         status,

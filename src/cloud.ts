@@ -20,6 +20,8 @@ export type UploadTask = {
   name: string;
   localPath: string;
   remotePath: string;
+  /** Human readable upload directory; empty for tasks queued before it existed. */
+  destination?: string;
   size: number;
   concurrency: number;
   status: string;

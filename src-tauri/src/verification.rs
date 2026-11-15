@@ -622,6 +622,7 @@ async fn extra_checks(app: &tauri::AppHandle) -> Result<Value, String> {
         vec![original.local_path.clone()],
         4,
         None,
+        None,
     )
     .await;
     let collision_rejected = collision.is_err();
@@ -735,6 +736,7 @@ async fn extra_checks(app: &tauri::AppHandle) -> Result<Value, String> {
         ],
         2,
         None,
+        None,
     )
     .await?;
     for _ in 0..120 {
@@ -798,6 +800,7 @@ async fn smoke(app: &tauri::AppHandle, resume: bool) -> Result<Value, String> {
             remote_dir.clone(),
             vec![path.to_string_lossy().into()],
             4,
+            None,
             None,
         )
         .await?;

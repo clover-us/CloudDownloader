@@ -46,6 +46,35 @@ const expanded = ref<string[]>([]);
 const batchBusy = ref(false);
 const removeSelection = ref(false);
 const removeIds = ref<string[]>([]);
+// Provider ids are long and opaque ("VOuZtCdxdziwqM1mQ8MUq7G7A1"), so tasks
+// queued before the destination existed fall back to a shortened path instead of
+// showing that noise to the user.
+const opaqueSegment = /^[A-Za-z0-9_-]{20,}$/;
+function shortenPath(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  if (!opaqueSegment.test(parts[0] ?? "")) return path;
+  return `…/${parts.pop() ?? ""}`;
+}
+function destinationLabel(task: UploadTask): string {
+  // Cloud providers key folders by opaque ids, so the queued directory is the
+  // only human readable hint we get. The remote name may differ from the local
+  // one when the provider de-duplicates, hence taking it from the remote path.
+  const name = task.remotePath.split("/").filter(Boolean).pop() ?? task.name;
+  if (!task.destination) return shortenPath(task.remotePath);
+  const directory = task.destination.replace(/\/+$/, "");
+  return `${directory || "/"}/${name}`;
+}
+function groupDestination(group: Group): string {
+  const first = group.tasks.find((task) => task.destination) ?? group.tasks[0];
+  if (!first) return group.path || "";
+  if (first.destination) {
+    const directory = first.destination.replace(/\/+$/, "");
+    return `${directory || "/"}/${group.name}`;
+  }
+  return opaqueSegment.test(first.remotePath.split("/").filter(Boolean)[0] ?? "")
+    ? `…/${group.name}`
+    : group.path || "";
+}
 const labels: Record<string, string> = {
   waiting: "排队中",
   hashing: "校验本地文件",
@@ -437,6 +466,9 @@ async function removeSelected() {
             >
             <span>{{ row.group.done }} / {{ row.group.total }} 已完成</span>
           </div>
+          <p v-if="groupDestination(row.group)" class="upload-destination">
+            上传到 {{ groupDestination(row.group) }}
+          </p>
         </div>
         <div v-if="row.group.speed" class="task-rate">
           <strong>{{ formatBytes(row.group.speed) }}<small>/s</small></strong>
@@ -514,8 +546,8 @@ async function removeSelected() {
               {{ remaining(row.task) }}</span
             >
           </div>
-          <p class="upload-destination" :title="row.task.remotePath">
-            上传到 {{ row.task.remotePath }}
+          <p class="upload-destination" :title="destinationLabel(row.task)">
+            上传到 {{ destinationLabel(row.task) }}
           </p>
           <p v-if="row.task.error" class="task-error">{{ row.task.error }}</p>
         </div>

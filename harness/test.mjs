@@ -782,7 +782,8 @@ await page.evaluate(() => {
       id: "upload-1",
       name: "报告.pdf",
       localPath: "D:\\docs\\报告.pdf",
-      remotePath: "/文档/报告.pdf",
+      remotePath: "/ff479e3d412c418788e14d3d83c977d7/报告.pdf",
+      destination: "/全部文件/项目资料",
       size: 1000,
       completed: 400,
       status: "active",
@@ -793,7 +794,7 @@ await page.evaluate(() => {
       id: "upload-2",
       name: "素材.zip",
       localPath: "D:\\docs\\素材.zip",
-      remotePath: "/文档/素材.zip",
+      remotePath: "/VOuZtCdxdziwqM1mQ8MUq7G7A1/素材.zip",
       size: 2000,
       completed: 1200,
       status: "paused",
@@ -824,6 +825,26 @@ check(
     "上传任务",
   ),
   await page.locator(".upload-head").innerText(),
+);
+const uploadDestination = await page
+  .locator("article.task-row .upload-destination")
+  .first()
+  .innerText();
+check(
+  "L1b upload row shows the readable destination instead of provider ids",
+  uploadDestination.includes("/全部文件/项目资料/报告.pdf") &&
+    !/[0-9a-f]{32}/.test(uploadDestination),
+  uploadDestination,
+);
+const legacyDestination = await page
+  .locator("article.task-row .upload-destination")
+  .nth(1)
+  .innerText();
+check(
+  "L1c tasks queued before the field existed hide the id chain",
+  legacyDestination.includes("…/素材.zip") &&
+    !legacyDestination.includes("VOuZtCdxdziwqM1mQ8MUq7G7A1"),
+  legacyDestination,
 );
 await page.locator(".upload-head .task-select-all input").check();
 await page.waitForSelector(".upload-head .batch-count");
@@ -898,6 +919,7 @@ await page.evaluate(() => {
       name: `素材-${index + 1}.psd`,
       localPath: `D:\\素材包\\素材-${index + 1}.psd`,
       remotePath: `/文档/素材包/素材-${index + 1}.psd`,
+      destination: "/全部文件/文档",
       size: 1000,
       completed: status === "complete" ? 1000 : 400,
       status,
@@ -909,6 +931,14 @@ await page.evaluate(() => {
   window.__MOCK__.emit("tasks-changed");
 });
 await page.waitForSelector(".task-group-row");
+const groupDestination = (
+  await page.locator(".task-group-row .upload-destination").innerText()
+).trim();
+check(
+  "L7b folder row shows where the folder was uploaded to",
+  groupDestination === "上传到 /全部文件/文档/素材包",
+  groupDestination,
+);
 check(
   "L7 folder upload renders as one group row",
   (await page.locator(".task-group-row").count()) === 1 &&

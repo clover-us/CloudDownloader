@@ -43,6 +43,9 @@ pub struct UploadRecord {
     pub name: String,
     pub local_path: String,
     pub remote_path: String,
+    /// 给人看的目录路径（网盘里 id 形式的路径对用户没有意义），空表示未知。
+    #[serde(default)]
+    pub destination: String,
     pub account_id: String,
     pub size: u64,
     pub modified_ns: String,
@@ -87,6 +90,7 @@ pub struct UploadView {
     pub name: String,
     pub local_path: String,
     pub remote_path: String,
+    pub destination: String,
     pub size: u64,
     pub concurrency: usize,
     pub status: String,
@@ -108,6 +112,7 @@ impl From<UploadRecord> for UploadView {
             name: t.name,
             local_path: t.local_path,
             remote_path: t.remote_path,
+            destination: t.destination,
             size: t.size,
             concurrency: t.concurrency,
             status: t.status,
@@ -1192,6 +1197,7 @@ mod tests {
             name: "test.bin".into(),
             local_path: path.to_string_lossy().into(),
             remote_path: "/test.bin".into(),
+            destination: "/".into(),
             account_id: "account".into(),
             size,
             modified_ns,

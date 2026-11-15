@@ -779,6 +779,7 @@ async function enqueueUploads(paths: string[], directory: string) {
     paths: files,
     concurrency: concurrency.value,
     batch: null,
+    destination: pathLabel(directory),
   });
   mode.value = "";
   uploadPlan.value = null;
@@ -975,14 +976,19 @@ async function enqueueFolder(
       directoryMap.set(relative, target);
     }
     const groups = new Map<string, string[]>();
+    const groupLabels = new Map<string, string>();
     for (const entry of plan) {
       const target = directoryMap.get(entry.relative || "") ?? directory;
       const bucket = groups.get(target) ?? [];
       bucket.push(entry.path);
       groups.set(target, bucket);
+      if (entry.relative) groupLabels.set(target, entry.relative);
     }
     let total = 0;
+    const baseLabel = pathLabel(directory);
     for (const [target, paths] of groups) {
+      const relative = groupLabels.get(target) ?? "";
+      const destination = relative ? `${baseLabel}/${relative}` : baseLabel;
       for (let index = 0; index < paths.length; index += 100) {
         const chunk = paths.slice(index, index + 100);
         await invoke("upload_enqueue", {
@@ -992,6 +998,7 @@ async function enqueueFolder(
           paths: chunk,
           concurrency: concurrency.value,
           batch: uploadBatch.value,
+          destination,
         });
         total += chunk.length;
       }

@@ -541,6 +541,8 @@ pub async fn upload_enqueue(
     paths: Vec<String>,
     concurrency: usize,
     batch: Option<crate::model::TaskBatch>,
+    // 目录的可读路径（夸克、迅雷的路径是内部 id，直接给用户看没有意义）。
+    destination: Option<String>,
 ) -> Result<Vec<UploadView>, String> {
     trusted(&window)?;
     if paths.is_empty() || paths.len() > 100 {
@@ -553,6 +555,16 @@ pub async fn upload_enqueue(
     };
     let concurrency = concurrency.clamp(1, part_cap);
     remote_path(&directory)?;
+    // Display only: strip control characters and cap the length so a provider
+    // payload can never smuggle something odd into the task list.
+    let destination: String = destination
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(512)
+        .collect();
     let _guard = state.resolving.lock().await;
     let session = session::connect(&app, provider).await?;
     let parent_id = if provider == Provider::Baidu {
@@ -607,6 +619,7 @@ pub async fn upload_enqueue(
             name,
             local_path,
             remote_path,
+            destination: destination.clone(),
             account_id: account_id.clone(),
             size,
             modified_ns,
