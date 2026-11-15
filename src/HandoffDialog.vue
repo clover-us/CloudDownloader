@@ -11,9 +11,20 @@ const props = defineProps<{
 const emit = defineEmits<{ take: []; browse: []; ignore: []; open: [] }>();
 
 const left = ref(props.waitSeconds ?? 15);
+const primary = ref<HTMLButtonElement | null>(null);
 let timer: number | undefined;
+let previousFocus: HTMLElement | null = null;
+
+// Esc means "ignore", the same as the close button; focus starts on the primary
+// action so the countdown can be acted on with the keyboard alone.
+function onKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape") emit("ignore");
+}
 
 onMounted(() => {
+  previousFocus = document.activeElement as HTMLElement | null;
+  document.addEventListener("keydown", onKeydown);
+  primary.value?.focus();
   timer = window.setInterval(() => {
     left.value -= 1;
     if (left.value <= 0) {
@@ -23,7 +34,11 @@ onMounted(() => {
   }, 1000);
 });
 
-onUnmounted(() => window.clearInterval(timer));
+onUnmounted(() => {
+  window.clearInterval(timer);
+  document.removeEventListener("keydown", onKeydown);
+  previousFocus?.focus();
+});
 
 function name() {
   const raw = (props.filename || props.url).split("/").pop() ?? props.url;
@@ -117,7 +132,7 @@ async function copyLink() {
         <button class="ghost" @click="emit('browse')">
           <Globe :size="14" /> 用浏览器下载
         </button>
-        <button class="primary" @click="emit('take')">
+        <button ref="primary" class="primary" @click="emit('take')">
           <ArrowDownToLine :size="14" /> 交给 CloudDownloader（{{ left }}）
         </button>
       </footer>

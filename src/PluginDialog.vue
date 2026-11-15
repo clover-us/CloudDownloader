@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import {
   CircleAlert,
@@ -111,7 +111,21 @@ function copySteps() {
   );
 }
 
-onMounted(refresh);
+// Esc closes the panel and focus returns to the button that opened it, matching
+// the account dialog; without it the only way out was the mouse.
+let previousFocus: HTMLElement | null = null;
+function onKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape") emit("close");
+}
+onMounted(() => {
+  previousFocus = document.activeElement as HTMLElement | null;
+  document.addEventListener("keydown", onKeydown);
+  void refresh();
+});
+onUnmounted(() => {
+  document.removeEventListener("keydown", onKeydown);
+  previousFocus?.focus();
+});
 </script>
 
 <template>

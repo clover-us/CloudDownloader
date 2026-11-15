@@ -213,23 +213,10 @@ fn account_name(payload: &Value) -> Result<String, String> {
     Err("请在夸克登录窗口完成登录".into())
 }
 
+/// Same rule as the other adapters: https, no credentials or port, known domain.
+/// It used to be a hand-rolled copy that skipped the userinfo and port checks.
 fn validate_download_url(value: &str) -> Result<(), String> {
-    let url = Url::parse(value).map_err(|_| "夸克返回的下载地址无效")?;
-    let host = url.host_str().unwrap_or_default();
-    if url.scheme() != "https"
-        || ![
-            "quark.cn",
-            "quark.com",
-            "uc.cn",
-            "ucweb.com",
-            "aliyuncs.com",
-        ]
-        .iter()
-        .any(|d| host == *d || host.ends_with(&format!(".{d}")))
-    {
-        return Err("下载地址不属于已知夸克下载域名".into());
-    }
-    Ok(())
+    crate::providers::validate_download(crate::model::Provider::Quark, value).map(|_| ())
 }
 
 #[cfg(test)]
