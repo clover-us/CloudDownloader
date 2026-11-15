@@ -393,6 +393,7 @@ impl Session {
                 ]))
                 .await?,
             )?;
+            super::debug_share("baidu", &data);
             let items = data["list"]
                 .as_array()
                 .or_else(|| data["data"]["list"].as_array())
@@ -403,35 +404,79 @@ impl Session {
                 let url = if short.starts_with("http") {
                     short
                 } else if short.is_empty() {
-                    String::new()
+                    let link = text(&item["shortlink"]);
+                    if link.is_empty() {
+                        continue;
+                    }
+                    link
                 } else if short.starts_with('/') {
                     format!("https://pan.baidu.com{short}")
                 } else {
                     format!("https://pan.baidu.com/s/{short}")
                 };
-                if url.is_empty() {
-                    continue;
-                }
-                let names = item["file_list"]
+                // Web 分享 record rows use camelCase `shareId`, `passwd` and
+                // `typicalPath`; there is no file_list, only fsIds.
+                let typical = text(&item["typicalPath"]);
+                let gone = typical == "分享的文件已被删除";
+                let leaf = typical.rsplit('/').next().unwrap_or("").trim().to_string();
+                let name = if leaf.is_empty() {
+                    text(&item["name"])
+                } else {
+                    leaf
+                };
+                let cancelled = gone
+                    || item["status"].as_u64().is_some_and(|status| status != 0)
+                    || item["dtime"].as_u64().is_some_and(|time| time > 0);
+                let fs_ids: Vec<u64> = item["fsIds"]
                     .as_array()
-                    .map(|files| {
-                        files
-                            .iter()
-                            .filter_map(|file| file["name"].as_str().map(str::to_string))
-                            .collect::<Vec<_>>()
-                    })
+                    .map(|ids| ids.iter().filter_map(Value::as_u64).collect())
                     .unwrap_or_default();
+                let expired_at = entry_timestamp(item, &["expiredTime"]);
+                let created_at = entry_timestamp(item, &["ctime", "create_time"]);
+                let period = if expired_at > created_at {
+                    u32::try_from((expired_at - created_at) / 86_400).unwrap_or(0)
+                } else {
+                    0
+                };
+                let password = {
+                    let code = text(&item["passwd"]);
+                    if code.is_empty() {
+                        text(&item["pwd"])
+                    } else {
+                        code
+                    }
+                };
                 shares.push(CreatedShare {
-                    id: text(&item["shareid"]),
+                    id: {
+                        let id = text(&item["shareId"]);
+                        if id.is_empty() {
+                            text(&item["shareid"])
+                        } else {
+                            id
+                        }
+                    },
                     url,
-                    password: text(&item["pwd"]),
-                    period: u32::try_from(item["period"].as_u64().unwrap_or(0)).unwrap_or(0),
-                    created_at: entry_timestamp(item, &["ctime", "create_time"]),
+                    password,
+                    period,
+                    created_at,
                     account_id: identity.account_id.clone(),
-                    names,
-                    cancelled: false,
+                    names: if name.is_empty() || name == "0" || gone {
+                        Vec::new()
+                    } else {
+                        vec![name.clone()]
+                    },
+                    cancelled,
                     provider: self.provider.key().into(),
-                    items: Vec::new(),
+                    items: if fs_ids.len() == 1 && !gone && typical.starts_with('/') {
+                        vec![ShareItem {
+                            id: fs_ids[0].to_string(),
+                            path: typical.clone(),
+                            name,
+                            is_dir: item["tCnt"].as_u64().unwrap_or(0) > 1,
+                        }]
+                    } else {
+                        Vec::new()
+                    },
                     code_mode: "auto".into(),
                 });
             }

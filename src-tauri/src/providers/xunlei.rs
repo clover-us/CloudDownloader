@@ -6,7 +6,7 @@
 // public client id/version that the browser at pan.xunlei.com uses, and every
 // request is authenticated with the cookies captured from the login WebView.
 // The captcha sign is a deterministic md5 chain over the public web salt list.
-use super::cloud::{capacity, check, entry, entry_timestamp, Capacity, Page};
+use super::cloud::{capacity, check, entry, timestamp_seconds, Capacity, Page};
 use super::{crypto, number, text, Session};
 use crate::model::*;
 use base64::Engine as _;
@@ -700,21 +700,21 @@ impl Session {
         })
     }
 
-    /// List the shares this account created on 迅雷云盘 (`GET /drive/v1/share`).
+    /// List the shares this account created on 迅雷云盘.
+    ///
+    /// 迅雷 does not document this route; `/drive/v1/share` is the share detail
+    /// call and wants a `share_id`, so the list lives under `/share/list`.
     pub async fn xunlei_share_list(&self) -> Result<Vec<CreatedShare>, String> {
         let account_id = self.cloud_identity().await?.0;
-        let captcha = self.captcha("GET:/drive/v1/share").await?;
-        let value = self
-            .api_get(
-                "/share",
-                &[("page", "1".to_string()), ("size", "100".to_string())],
-                &captcha,
-            )
-            .await?;
-        let items = value["share_list"]
-            .as_array()
-            .or_else(|| value["shares"].as_array())
-            .cloned()
+        let captcha = self.captcha("GET:/drive/v1/share/list").await?;
+        let query = [("limit", "100".to_string())];
+        let value = self.api_get("/share/list", &query, &captcha).await?;
+        super::debug_share("xunlei", &value);
+        // `{"data": [...], "next_page_token": ""}`; each row carries a share_id,
+        // the short link and the file behind it, not just a title.
+        let items = ["data", "share_list", "shares", "list"]
+            .iter()
+            .find_map(|key| value[*key].as_array().cloned())
             .unwrap_or_default();
         let mut shares = Vec::new();
         for item in &items {
@@ -722,14 +722,17 @@ impl Session {
             if url.is_empty() {
                 continue;
             }
-            let created_at = entry_timestamp(item, &["created_at", "create_time", "ctime"]);
-            let expired_at = entry_timestamp(item, &["expire_time", "expired_at"]);
+            let created_at = timestamp_seconds(&item["create_time"]);
+            let expired_at = timestamp_seconds(&item["expiration_at"]);
             let period = if expired_at > created_at {
                 u32::try_from((expired_at - created_at) / 86_400).unwrap_or(0)
             } else {
                 0
             };
             let title = text(&item["title"]);
+            let status = text(&item["share_status"]);
+            let file_id = text(&item["file_id"]);
+            let file_name = text(&item["params"]["name"]);
             shares.push(CreatedShare {
                 id: text(&item["share_id"]),
                 url,
@@ -740,13 +743,24 @@ impl Session {
                 names: if title.is_empty() {
                     Vec::new()
                 } else {
-                    vec![title]
+                    vec![title.clone()]
                 },
-                cancelled: item["status"]
-                    .as_str()
-                    .is_some_and(|status| status.eq_ignore_ascii_case("cancelled")),
+                cancelled: !status.is_empty() && !status.eq_ignore_ascii_case("ok"),
                 provider: self.provider.key().into(),
-                items: Vec::new(),
+                items: if file_id.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![ShareItem {
+                        id: file_id,
+                        path: String::new(),
+                        name: if file_name.is_empty() {
+                            title
+                        } else {
+                            file_name
+                        },
+                        is_dir: text(&item["file_kind"]) == "drive#folder",
+                    }]
+                },
                 code_mode: "auto".into(),
             });
         }

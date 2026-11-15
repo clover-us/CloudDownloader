@@ -876,6 +876,7 @@ impl Session {
             )
             .await?,
         )?;
+        super::debug_share("cloud", &value);
         let mut shares = Vec::new();
         for item in value["data"]["list"].as_array().into_iter().flatten() {
             let url = text(&item["share_url"]);
@@ -890,6 +891,26 @@ impl Session {
                 0
             };
             let title = text(&item["title"]);
+            // A single-file share keeps the file id with the record, which is
+            // enough to create an identical share again after it was stopped.
+            let first = {
+                let direct = text(&item["first_fid"]);
+                if direct.is_empty() {
+                    text(&item["first_file"]["fid"])
+                } else {
+                    direct
+                }
+            };
+            let items = if item["file_num"].as_u64() == Some(1) && !first.is_empty() {
+                vec![ShareItem {
+                    id: first,
+                    path: String::new(),
+                    name: title.clone(),
+                    is_dir: false,
+                }]
+            } else {
+                Vec::new()
+            };
             shares.push(CreatedShare {
                 id: text(&item["share_id"]),
                 url,
@@ -904,7 +925,7 @@ impl Session {
                 },
                 cancelled: false,
                 provider: self.provider.key().into(),
-                items: Vec::new(),
+                items,
                 code_mode: "auto".into(),
             });
         }

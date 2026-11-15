@@ -630,14 +630,33 @@ pub async fn drive_share_sync(
     }
     for share in &remote {
         let mut merged = share.clone();
-        if let Some(saved) = local
+        // Legacy rows were stored without the provider's own id (the endpoint
+        // used at the time did not expose it), so match those by link.
+        let matched = local
             .iter()
             .find(|s| s.id == share.id && s.account_id == share.account_id)
-        {
+            .or_else(|| {
+                local.iter().find(|s| {
+                    s.id.is_empty()
+                        && !s.url.is_empty()
+                        && s.url == share.url
+                        && s.account_id == share.account_id
+                })
+            });
+        if let Some(saved) = matched {
             if merged.names.is_empty() && !saved.names.is_empty() {
                 merged.names = saved.names.clone();
             }
             merged.cancelled |= saved.cancelled;
+            if merged.password.is_empty() {
+                merged.password = saved.password.clone();
+            }
+            if !saved.code_mode.is_empty() {
+                merged.code_mode = saved.code_mode.clone();
+            }
+            if !saved.id.is_empty() && saved.id != merged.id {
+                store.remove_share(&saved.id)?;
+            }
         }
         store.save_share(&merged)?;
     }

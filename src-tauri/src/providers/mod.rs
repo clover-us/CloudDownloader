@@ -202,6 +202,16 @@ pub fn number(value: &Value) -> u64 {
         .unwrap_or(0)
 }
 
+/// Dump a provider payload when CD_DEBUG_SHARE is set (helps when a private
+/// endpoint changes shape and we need to see the real field names).
+pub fn debug_share(tag: &str, value: &Value) {
+    if std::env::var_os("CD_DEBUG_SHARE").is_none() {
+        return;
+    }
+    let dump: String = value.to_string().chars().take(6_000).collect();
+    eprintln!("[share-debug] {tag}: {dump}");
+}
+
 pub fn parse_share(input: &str, code: &str) -> Result<ShareLink, String> {
     let pattern = regex::Regex::new(r#"https?://[^\s<>\"，。；）)\]]+"#).unwrap();
     let code_pattern =

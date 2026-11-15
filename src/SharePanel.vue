@@ -414,7 +414,7 @@ onMounted(() => void sync(true));
           </button>
         </template>
         <button
-          v-else-if="s.items?.length"
+          v-else
           class="icon-button"
           title="重新分享"
           aria-label="重新分享"
