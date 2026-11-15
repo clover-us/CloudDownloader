@@ -2,7 +2,14 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Copy, Link, LoaderCircle, Share2, X } from "@lucide/vue";
+import {
+  Copy,
+  Link,
+  LoaderCircle,
+  RefreshCw,
+  Share2,
+  X,
+} from "@lucide/vue";
 import {
   type CreatedShare,
   formatDate,
@@ -186,20 +193,9 @@ onMounted(() => void sync(true));
         countFor(provider.id)
       }}</span>
     </button>
-    <button
-      class="drive-provider-add"
-      :disabled="syncing"
-      @click="sync(false)"
-    >
-      <LoaderCircle v-if="syncing" :size="14" class="spinning" /><Share2
-        v-else
-        :size="14"
-      />从网盘刷新
-    </button>
   </div>
   <section class="card task-list">
     <div
-      v-if="visible.length"
       class="task-list-head"
       :class="{ 'head-selected': batch.length }"
     >
@@ -239,51 +235,74 @@ onMounted(() => void sync(true));
       </template>
       <span v-else class="head-label">分享记录</span>
       <span class="batch-spacer" />
+      <button
+        class="icon-button head-refresh"
+        :title="syncing ? '正在同步网盘上的分享记录' : '从网盘刷新'"
+        aria-label="从网盘刷新"
+        :disabled="syncing || busy"
+        @click="sync(false)"
+      >
+        <LoaderCircle v-if="syncing" :size="16" class="spinning" /><RefreshCw
+          v-else
+          :size="16"
+        />
+      </button>
     </div>
     <div v-if="!visible.length" class="empty-state">
       <span class="empty-illustration"><Link :size="40" /></span>
       <h3>还没有分享记录</h3>
       <p>在「我的网盘」中选择文件，设置有效期和提取码。</p>
     </div>
-    <article v-for="s in visible" :key="s.id" class="share-record">
-      <div class="task-name-row">
-        <label class="task-select" :title="batch.includes(s.id) ? '取消选择' : '选择'">
-          <input
-            type="checkbox"
-            :checked="batch.includes(s.id)"
-            :disabled="busy"
-            @change="toggle(s.id)"
-          />
-        </label>
-        <strong :title="s.names.join('、')">{{ s.names.join("、") }}</strong
-        ><span
-          class="status-pill"
-          :class="{ complete: live(s) }"
-          >{{ s.cancelled ? "已取消" : expired(s) ? "已过期" : "分享中" }}</span
+    <article v-for="s in visible" :key="s.id" class="task-row share-record">
+      <label
+        class="task-select"
+        :title="batch.includes(s.id) ? '取消选择' : '选择'"
+      >
+        <input
+          type="checkbox"
+          :checked="batch.includes(s.id)"
+          :disabled="busy"
+          @change="toggle(s.id)"
+        />
+      </label>
+      <div class="task-file-icon"><Share2 :size="22" /></div>
+      <div class="task-details">
+        <div class="task-name-row">
+          <strong :title="s.names.join('、')">{{ s.names.join("、") }}</strong
+          ><span class="status-pill" :class="{ complete: live(s) }">{{
+            s.cancelled ? "已取消" : expired(s) ? "已过期" : "分享中"
+          }}</span>
+        </div>
+        <div class="share-link-text">
+          <Link :size="14" /><a
+            class="share-link"
+            :href="s.url"
+            :title="`在浏览器中打开 ${s.url}`"
+            @click.prevent="open(s)"
+            >{{ s.url }}</a
+          ><span v-if="s.password">提取码：{{ s.password }}</span
+          ><span v-else>无需提取码</span>
+        </div>
+        <div class="share-meta">
+          <span>创建于 {{ formatDate(s.createdAt) }}</span>
+          <span>· {{ formatSharePeriod(s.period) }}</span>
+        </div>
+      </div>
+      <div v-if="live(s)" class="task-actions">
+        <button
+          class="icon-button"
+          title="复制分享"
+          aria-label="复制分享"
+          @click="copy(s)"
         >
-      </div>
-      <div class="share-link-text">
-        <Link :size="15" /><a
-          class="share-link"
-          :href="s.url"
-          :title="`在浏览器中打开 ${s.url}`"
-          @click.prevent="open(s)"
-          >{{ s.url }}</a
-        ><span v-if="s.password">提取码：{{ s.password }}</span
-        ><span v-else>无需提取码</span>
-      </div>
-      <div class="share-record-bottom">
-        <span
-          >创建于 {{ formatDate(s.createdAt) }} ·
-          {{ formatSharePeriod(s.period) }}</span
-        ><button v-if="live(s)" class="text-button" @click="copy(s)">
-          <Copy :size="14" />复制分享</button
+          <Copy :size="16" /></button
         ><button
-          v-if="live(s)"
-          class="text-button cancel-share"
+          class="icon-button"
+          title="取消分享"
+          aria-label="取消分享"
           @click="askCancel(s)"
         >
-          <X :size="14" />取消分享
+          <X :size="16" />
         </button>
       </div>
     </article>

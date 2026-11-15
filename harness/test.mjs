@@ -1195,7 +1195,7 @@ check(
   ),
   await page.locator("article.share-record").first().innerText(),
 );
-await page.locator(".drive-provider-add").click();
+await page.locator('button[aria-label="从网盘刷新"]').click();
 await page.waitForFunction(() =>
   window.__MOCK__.lastCall("drive_share_sync"),
 );
