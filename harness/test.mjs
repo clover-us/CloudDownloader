@@ -1172,17 +1172,17 @@ check(
   await page.locator(".task-list-head .batch-count").innerText(),
 );
 await shot("18-share-batch");
-await page.locator(".task-list-head .batch-btn", { hasText: "取消分享" }).click();
+await page.locator(".task-list-head .batch-btn", { hasText: "停止分享" }).click();
 await page.waitForSelector(".confirm-dialog");
 const shareDialog = (
   await page.locator(".confirm-dialog").innerText()
 ).replace(/\s+/g, " ");
 check(
-  "S3 batch cancel dialog only counts live shares",
-  shareDialog.includes("取消所选的 1 个分享？"),
+  "S3 batch stop dialog only counts live shares",
+  shareDialog.includes("停止所选的 1 个分享？"),
   shareDialog.slice(0, 140),
 );
-await page.locator(".confirm-dialog button", { hasText: "取消分享" }).click();
+await page.locator(".confirm-dialog button", { hasText: "停止分享" }).click();
 await page.waitForFunction(() =>
   window.__MOCK__.lastCall("drive_cancel_share"),
 );
@@ -1198,7 +1198,7 @@ await page.waitForFunction(
       .length === 0,
 );
 check(
-  "S5 cancelled share flips to 已取消 and selection resets",
+  "S5 stopped share flips to 已取消 and selection resets",
   (await page.locator(".task-list-head .batch-count").count()) === 0 &&
     (await page.locator("article.share-record").first().innerText()).includes(
       "已取消",
@@ -1225,6 +1225,24 @@ check(
   ),
   await page.locator("article.share-record").first().innerText(),
 );
+const shareRowText = await page
+  .locator("article.share-record")
+  .first()
+  .innerText();
+const shareLinkStyle = await page
+  .locator("article.share-record a.share-link")
+  .first()
+  .evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { overflow: style.textOverflow, wrap: style.whiteSpace };
+  });
+check(
+  "S7b shares without a code drop the placeholder and long links clip",
+  !shareRowText.includes("无需提取码") &&
+    shareLinkStyle.overflow === "ellipsis" &&
+    shareLinkStyle.wrap === "nowrap",
+  `${shareLinkStyle.overflow}/${shareLinkStyle.wrap}`,
+);
 await page.locator('button[aria-label="从网盘刷新"]').click();
 await page.waitForFunction(() =>
   window.__MOCK__.lastCall("drive_share_sync"),
@@ -1245,7 +1263,7 @@ const forgetDialog = (
 check(
   "S9 deleting a share record asks before forgetting it",
   forgetDialog.includes("删除这条分享记录？") &&
-    forgetDialog.includes("取消分享"),
+    forgetDialog.includes("停止分享"),
   forgetDialog.slice(0, 140),
 );
 await page.locator(".confirm-dialog button", { hasText: "删除记录" }).click();

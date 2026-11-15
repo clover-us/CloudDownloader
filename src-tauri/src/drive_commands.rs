@@ -424,6 +424,31 @@ pub async fn drive_share(
     Ok(share)
 }
 
+/// Work out which provider a share belongs to. Records written before the
+/// `provider` field existed only carry the link, so fall back to its host
+/// instead of blindly assuming Baidu.
+fn share_provider(share: &CreatedShare) -> Option<Provider> {
+    if let Some(provider) = Provider::ALL
+        .iter()
+        .copied()
+        .find(|p| p.key() == share.provider)
+    {
+        return Some(provider);
+    }
+    let url = share.url.to_ascii_lowercase();
+    if url.contains("pan.baidu.com") {
+        Some(Provider::Baidu)
+    } else if url.contains("quark.cn") {
+        Some(Provider::Quark)
+    } else if url.contains("uc.cn") {
+        Some(Provider::Uc)
+    } else if url.contains("xunlei.com") {
+        Some(Provider::Xunlei)
+    } else {
+        None
+    }
+}
+
 #[tauri::command]
 pub async fn drive_cancel_share(
     window: WebviewWindow,
@@ -441,13 +466,10 @@ pub async fn drive_cancel_share(
         .find(|s| s.id == id)
         .ok_or("分享记录不存在")?;
     if !share.cancelled {
-        // Records written before the provider field existed are Baidu shares,
-        // which is the only provider that used to be cancellable.
-        let provider = Provider::ALL
-            .iter()
-            .copied()
-            .find(|p| p.key() == share.provider)
-            .unwrap_or(Provider::Baidu);
+        // Legacy records carry only the link; share_provider reads the host and
+        // never routes a Quark/Xunlei link through the Baidu endpoints.
+        let provider =
+            share_provider(&share).ok_or("无法判断这条分享属于哪个网盘，请先刷新分享记录")?;
         let session = session::connect(&app, provider).await?;
         match provider {
             Provider::Baidu => session.drive_cancel_share(&share).await?,
@@ -503,7 +525,9 @@ pub async fn drive_share_sync(
     let store = state.store.lock().unwrap();
     let local = store.shares()?;
     for saved in &local {
-        if saved.provider.is_empty() && saved.account_id == account_id {
+        if saved.provider.is_empty()
+            && (saved.account_id == account_id || share_provider(saved) == Some(provider))
+        {
             let mut backfilled = saved.clone();
             backfilled.provider = provider.key().into();
             store.save_share(&backfilled)?;
@@ -938,4 +962,43 @@ pub fn collect_local_files(window: WebviewWindow, root: String) -> Result<Vec<Lo
     walk(base, base, 0, &mut HashSet::new(), &mut out)?;
     out.sort_by(|a, b| a.relative.cmp(&b.relative).then(a.path.cmp(&b.path)));
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn share(provider: &str, url: &str) -> CreatedShare {
+        CreatedShare {
+            id: "share-1".into(),
+            url: url.into(),
+            password: String::new(),
+            period: 7,
+            created_at: 0,
+            account_id: "account".into(),
+            names: vec!["文件".into()],
+            cancelled: false,
+            provider: provider.into(),
+        }
+    }
+
+    #[test]
+    fn legacy_share_provider_comes_from_the_link_host() {
+        assert_eq!(
+            share_provider(&share("quark", "https://pan.quark.cn/s/abc")),
+            Some(Provider::Quark)
+        );
+        assert_eq!(
+            share_provider(&share("", "https://pan.xunlei.com/s/abc")),
+            Some(Provider::Xunlei)
+        );
+        assert_eq!(
+            share_provider(&share("", "https://pan.baidu.com/s/1abc")),
+            Some(Provider::Baidu)
+        );
+        assert_eq!(
+            share_provider(&share("", "https://example.com/s/abc")),
+            None
+        );
+    }
 }

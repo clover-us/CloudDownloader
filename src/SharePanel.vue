@@ -6,10 +6,10 @@ import {
   Copy,
   Link,
   LoaderCircle,
+  Pause,
   RefreshCw,
   Share2,
   Trash2,
-  X,
 } from "@lucide/vue";
 import {
   type CreatedShare,
@@ -275,7 +275,7 @@ onMounted(() => void sync(true));
             :disabled="busy || !cancellable.length"
             @click="askCancelSelected"
           >
-            <X :size="15" />取消分享
+            <Pause :size="15" />停止分享
           </button>
           <button
             class="batch-btn"
@@ -331,8 +331,9 @@ onMounted(() => void sync(true));
             :title="`在浏览器中打开 ${s.url}`"
             @click.prevent="open(s)"
             >{{ s.url }}</a
-          ><span v-if="s.password">提取码：{{ s.password }}</span
-          ><span v-else>无需提取码</span>
+          ><span v-if="s.password" class="share-code"
+            >提取码：{{ s.password }}</span
+          >
         </div>
         <div class="task-meta share-meta">
           <span>创建于 {{ formatDate(s.createdAt) }}</span>
@@ -355,11 +356,11 @@ onMounted(() => void sync(true));
             <Copy :size="17" /></button
           ><button
             class="icon-button"
-            title="取消分享"
-            aria-label="取消分享"
+            title="停止分享"
+            aria-label="停止分享"
             @click="askCancel(s)"
           >
-            <X :size="17" />
+            <Pause :size="17" />
           </button>
         </template>
         <button
@@ -388,7 +389,7 @@ onMounted(() => void sync(true));
             {{ forgetting.map((s) => s.names.join("、")).join("；") }}
           </p>
           <p>
-            只删除本机的记录；如果链接在网盘上仍然有效，删除后依旧可以访问，需要让它失效请用「取消分享」。
+            只删除本机的记录；如果链接在网盘上仍然有效，删除后依旧可以访问，需要让它失效请用「停止分享」。
           </p>
           <div class="button-row">
             <button class="secondary" :disabled="busy" @click="closeDialog">
@@ -402,22 +403,22 @@ onMounted(() => void sync(true));
           <h2>
             {{
               batchCancel
-                ? `取消所选的 ${cancellable.length} 个分享？`
-                : "取消这个分享？"
+                ? `停止所选的 ${cancellable.length} 个分享？`
+                : "停止这个分享？"
             }}
           </h2>
           <p v-if="batchCancel">
-            取消后这些链接将无法访问，网盘文件会保留。
+            停止后这些链接将无法访问，网盘文件会保留。
           </p>
           <p v-else-if="target">
             {{ target.names.join("、")
-            }}<br />取消后原链接将无法访问，网盘文件会保留。
+            }}<br />停止后原链接将无法访问，网盘文件会保留。
           </p>
           <div class="button-row">
             <button class="secondary" :disabled="busy" @click="closeDialog">
               返回</button
             ><button class="danger" :disabled="busy" @click="confirm">
-              {{ busy ? "正在取消…" : "取消分享" }}
+              {{ busy ? "正在停止…" : "停止分享" }}
             </button>
           </div>
         </template>
