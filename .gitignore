@@ -8,9 +8,6 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-/.research/
-/.verification/
-/third-party/aria2-1.37.0/
 /third-party/*.zip
 /release/
 /package/

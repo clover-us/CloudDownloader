@@ -22,7 +22,6 @@
         "visible": false,
         "center": true,
         "dragDropEnabled": true,
-        "additionalBrowserArgs": "--force-renderer-accessibility",
         "backgroundColor": "#EAF5FC",
         "theme": "Light"
       }

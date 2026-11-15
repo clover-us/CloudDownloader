@@ -60,6 +60,9 @@ if (-not (Test-Path -LiteralPath $packageEngine) -or
 Copy-Item -LiteralPath (Join-Path $projectRoot 'third-party\notices') -Destination (Join-Path $packageRoot 'bin') -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination $packageRoot -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'VERIFICATION.md') -Destination $packageRoot -Force
+# 桥的 /update.xml 与 /extension.crx 从 resource_dir\extension 读取扩展目录，
+# 便携包缺了它会让「安装扩展」提示找不到目录、扩展自更新 404。
+Copy-Item -LiteralPath (Join-Path $projectRoot 'extension') -Destination (Join-Path $packageRoot 'extension') -Recurse -Force
 
 if ($IncludeInstaller) {
     $nsisRoot = Join-Path $buildRoot 'nsis\x64'
@@ -134,7 +137,7 @@ VIAddVersionKey /LANG=1033 "OriginalFilename" "__INSTALLER_FILENAME__"
     $actualBin = @(Get-ChildItem -LiteralPath (Join-Path $packageRoot 'bin') -Recurse -File | ForEach-Object { $_.FullName.Substring((Join-Path $packageRoot 'bin').Length + 1) })
     if (Compare-Object ($expectedBin | Sort-Object) ($actualBin | Sort-Object)) { throw '便携包 bin 目录含有非预期文件，请检查后发布' }
     $zipPath = Join-Path $packageRoot "CloudDownloader-$appVersion-win-x64.zip"
-    $portable = @('CloudDownloader.exe', 'bin', 'README.md', 'VERIFICATION.md') | ForEach-Object { Join-Path $packageRoot $_ }
+    $portable = @('CloudDownloader.exe', 'bin', 'extension', 'README.md', 'VERIFICATION.md') | ForEach-Object { Join-Path $packageRoot $_ }
     Compress-Archive -LiteralPath $portable -DestinationPath $zipPath -Force
     $checksums = @($installerPath, $zipPath) | ForEach-Object {
         (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + [IO.Path]::GetFileName($_)

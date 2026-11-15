@@ -986,7 +986,9 @@ await page.waitForFunction(() =>
 const pluginText = await page.locator(".plugin-dialog").innerText();
 check(
   "N1 plugin button shows the extension state",
-  pluginText.includes("127.0.0.1:17890") && pluginText.includes("0.2.0"),
+  // Version must match harness/mock-tauri.ts bridge_status, which mirrors
+  // extension/manifest.json.
+  pluginText.includes("127.0.0.1:17890") && pluginText.includes("0.2.1"),
   pluginText.slice(0, 120),
 );
 await page.getByRole("button", { name: "重新检测" }).click();

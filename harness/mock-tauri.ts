@@ -414,9 +414,10 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
     const file = args.file as Record<string, unknown>;
     return { ...file, name: args.newName };
   }
-  if (cmd === "drive_delete_at") {
+  if (cmd === "drive_delete_at" || cmd === "drive_cancel_share") {
     return null;
   }
+  if (cmd === "cancel_bt_inspection") return null;
   if (cmd === "task_action") {
     const index = state.tasks.findIndex((t) => t.id === args.id);
     if (index < 0) throw "下载任务不存在";
@@ -469,7 +470,7 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
   }
   // Starting a download returns the task the backend created; the real command
   // answers with the same shape, so the list only refreshes afterwards.
-  if (cmd === "enqueue_direct" || cmd === "enqueue_bt") {
+  if (cmd === "enqueue_direct" || cmd === "enqueue_bt" || cmd === "enqueue") {
     const name =
       String(args.filename ?? "").trim() ||
       String(args.url ?? "")
@@ -479,8 +480,7 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
       "下载任务";
     return task(`created-${state.calls.length}`, name, "resolving", 0, 0, 0);
   }
-  // feat merge: settings + in-app updater.
-  if (cmd === "settings_get") return { ...settings };
+  // Settings come from snapshot; the app has no settings_get command.
   if (cmd === "bridge_status")
     return {
       listening: true,
@@ -488,10 +488,16 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
       enabled: settings.browserBridge,
       last: state.lastHandoff,
       seenAt: Math.floor(Date.now() / 1000) - 20,
-      version: "0.2.0",
+      version: "0.2.1",
     };
   if (cmd === "extension_folder") return "D:\\CloudDownloader\\extension";
-  if (cmd === "open_extension_folder" || cmd === "open_in_browser") return null;
+  if (
+    cmd === "open_extension_folder" ||
+    cmd === "open_in_browser" ||
+    cmd === "open_directory" ||
+    cmd === "set_directory"
+  )
+    return null;
   if (cmd === "settings_set") {
     Object.assign(settings, args.settings);
     return { ...settings };
@@ -499,6 +505,9 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
   if (cmd === "open_data_directory") return null;
   if (cmd === "plugin:updater|check") return null; // no update available
   if (cmd.startsWith("plugin:process|")) return null;
+  // Anything else resolves to null. Only the commands the UI exercises are
+  // simulated above; parse_link, poll_bt_inspection and the share-listing paths
+  // still fall through here, so a test that needs them must add a handler.
   return null;
 }
 
