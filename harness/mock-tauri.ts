@@ -105,6 +105,8 @@ const state = {
   } as Record<string, string>,
   calls: [] as { cmd: string; args: unknown }[],
   uploads: [] as Record<string, unknown>[],
+  // 分享记录：snapshot 直接回这里，drive_cancel_share 把对应记录标成已取消。
+  shares: [] as Record<string, unknown>[],
   handoffs: [] as {
     url: string;
     filename?: string | null;
@@ -262,7 +264,7 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
       engineRunning: true,
       engineError: "",
       uploads: state.uploads.map((upload) => ({ ...upload })),
-      shares: [],
+      shares: state.shares.map((share) => ({ ...share })),
       settings: { ...settings },
     };
   }
@@ -438,8 +440,8 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
   if (cmd === "drive_share") {
     const names =
       (args.files as { name: string }[] | undefined)?.map((f) => f.name) ?? [];
-    return {
-      id: `mock-${args.provider ?? "baidu"}-share`,
+    const share = {
+      id: `mock-${args.provider ?? "baidu"}-share-${state.shares.length + 1}`,
       url: `https://${args.provider ?? "baidu"}.example.com/s/1mockShare`,
       password: args.password ?? "abcd",
       period: args.period,
@@ -448,12 +450,20 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
       names,
       cancelled: false,
     };
+    state.shares.push(share);
+    return share;
   }
   if (cmd === "drive_rename_at") {
     const file = args.file as Record<string, unknown>;
     return { ...file, name: args.newName };
   }
-  if (cmd === "drive_delete_at" || cmd === "drive_cancel_share") {
+  if (cmd === "drive_cancel_share") {
+    const share = state.shares.find((item) => item.id === args.id);
+    if (!share) throw "分享记录不存在，请刷新后重试";
+    share.cancelled = true;
+    return null;
+  }
+  if (cmd === "drive_delete_at") {
     return null;
   }
   if (cmd === "cancel_bt_inspection") return null;

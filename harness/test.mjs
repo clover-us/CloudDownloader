@@ -1035,6 +1035,88 @@ check(
   JSON.stringify(originBadge),
 );
 
+// --- S. Share records reuse the upload list's batch header ---
+await page.evaluate(() => {
+  const state = window.__MOCK__.state;
+  state.shares.length = 0;
+  state.shares.push(
+    {
+      id: "share-live",
+      url: "https://pan.baidu.com/s/1liveShare",
+      password: "aaaa",
+      period: 7,
+      createdAt: Math.floor(Date.now() / 1000),
+      accountId: "baidu-account",
+      names: ["电影合集.zip"],
+      cancelled: false,
+    },
+    {
+      id: "share-gone",
+      url: "https://pan.quark.cn/s/1goneShare",
+      password: "bbbb",
+      period: 7,
+      createdAt: Math.floor(Date.now() / 1000),
+      accountId: "quark-account",
+      names: ["文档.pdf"],
+      cancelled: true,
+    },
+  );
+  window.__MOCK__.emit("tasks-changed");
+});
+await nav("分享记录");
+await page.waitForFunction(
+  () => document.querySelectorAll("article.share-record").length === 2,
+);
+check(
+  "S1 share list has a batch header",
+  (await page.locator(".task-list-head .head-label").innerText()).includes(
+    "分享记录",
+  ),
+  await page.locator(".task-list-head").innerText(),
+);
+await page.locator(".task-list-head .task-select-all input").check();
+await page.waitForSelector(".task-list-head .batch-count");
+check(
+  "S2 share select-all counts records",
+  (await page.locator(".task-list-head .batch-count").innerText()).includes(
+    "2",
+  ),
+  await page.locator(".task-list-head .batch-count").innerText(),
+);
+await shot("18-share-batch");
+await page.locator(".task-list-head .batch-btn", { hasText: "取消分享" }).click();
+await page.waitForSelector(".confirm-dialog");
+const shareDialog = (
+  await page.locator(".confirm-dialog").innerText()
+).replace(/\s+/g, " ");
+check(
+  "S3 batch cancel dialog only counts live shares",
+  shareDialog.includes("取消所选的 1 个分享？"),
+  shareDialog.slice(0, 140),
+);
+await page.locator(".confirm-dialog button", { hasText: "取消分享" }).click();
+await page.waitForFunction(() =>
+  window.__MOCK__.lastCall("drive_cancel_share"),
+);
+const cancelCall = await mock("lastCall", "drive_cancel_share");
+check(
+  "S4 batch cancel hits the backend for the live share",
+  cancelCall?.args?.id === "share-live",
+  JSON.stringify(cancelCall?.args),
+);
+await page.waitForFunction(
+  () =>
+    document.querySelectorAll("article.share-record .status-pill.complete")
+      .length === 0,
+);
+check(
+  "S5 cancelled share flips to 已取消 and selection resets",
+  (await page.locator(".task-list-head .batch-count").count()) === 0 &&
+    (await page.locator("article.share-record").first().innerText()).includes(
+      "已取消",
+    ),
+);
+
 // --- N. Title bar plugin button ---
 await page.locator(".plugin-toggle").click();
 await page.waitForSelector(".plugin-dialog");
