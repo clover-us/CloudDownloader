@@ -22,11 +22,13 @@
 - `cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1`：**99 passed / 0 failed / 1 ignored**（忽略项为需要真实账号的 `providers::tests::live_share_listing`）。新增 `bridge::tests::connection_slots_are_bounded`，校验连接名额占满后拒绝接入、释放后可重新获取。
 - `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo check --all-targets` 通过。
 - `npm run build`（`vue-tsc --noEmit` + Vite 生产构建）通过，产物 `dist/assets/index-*.js` 约 245 kB（gzip 约 80 kB）。
+- `npm run test:ui`（`harness/` 的 mock 后端 + Playwright 驱动本机 Edge）：**91 项检查全部通过**，末尾 `Z1 no page errors` 确认页面没有脚本报错。覆盖账户与登录态、网盘浏览与搜索、任务列表与文件夹分组、批处理、上传、设置与浏览器接力面板、接力确认窗等界面路径。
+- 开发版真机核对（`npm run tauri dev`，Windows）：应用与 aria2 1.37.0 子进程正常启动；桥监听 `127.0.0.1:17890`，真实扩展 Origin 取 `/update.xml` 返回 200、伪造 Origin 返回 403；`/add` 对 `127.0.0.1` 与 `169.254.169.254` 返回 400、对真实 Origin 的公网链接返回 200；杀掉 aria2 后约 8 秒自动重启且 RPC 可用；`clouddownloader://` 深链接不产生第二个实例；`tasks.sqlite3` 建表与设置默认值符合预期。
 
 ## 验证范围
 
-- 本次未重跑浏览器自动化（`npm run test:ui`）与真实账号的桌面端手动流程；涉及界面改动的部分只有单元测试与生产构建覆盖。
-- 协议层未调用真实接口的部分与 0.6.7 相同；本次改动不触及各网盘取链协议。
+- 未覆盖九个网盘的登录与真实取链（需要真实账号）、桌面窗口上的点击级端到端下载（无头环境无法操作窗口）、安装包升级路径，以及 DNS rebinding 防护。
+- 协议层与 0.6.7 相同；本次改动不触及各网盘取链协议。
 - DNS rebinding 未做防护：接力拒绝的是字面地址与主机名，无法阻止解析到内网 IP 的公网域名。
 
 ## 历史验证

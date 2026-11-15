@@ -28,6 +28,16 @@ cargo fmt --manifest-path src-tauri/Cargo.toml --check
 
 测试包含真实 aria2 与本地 HTTP 服务的多连接并发、暂停、引擎重启、更换地址续传、非分段服务器回退和逐字节一致性验证，以及上传分片重试、源文件变化检测、检查点恢复、旧数据库迁移、网盘识别、错误处理、下载域名边界和 Windows 文件名处理。真实百度上传、续传、下载和分享的验证结果见[验证记录](../VERIFICATION.md)；自动测试不会使用网盘账号。设置相关的测试覆盖越界值回退、SQLite 往返持久化，以及真实 aria2 上「启动参数生效 + 运行时 `changeGlobalOption`」两条路径。
 
+界面自动化检查跑在 `harness/` 的 mock 后端上（`window.__MOCK__` 替代 Tauri IPC），不碰真实账号与真实下载。Playwright 不进 `package.json`，需要时临时安装，首次运行借用系统 Edge：
+
+```powershell
+npm install --no-save playwright
+npm run dev     # 另开一个终端；或让 npm run tauri dev 顺带启动
+npm run test:ui
+```
+
+脚本默认访问 `http://localhost:1420/harness/index.html`，可用 `BASE` 环境变量指向别的地址。
+
 ## 发布与自动更新
 
 安装版通过 `tauri-plugin-updater` 从 GitHub Releases 的 `latest.json` 检查更新，安装包使用 minisign 签名校验。
