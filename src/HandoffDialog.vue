@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { ArrowDownToLine, Globe, X } from "@lucide/vue";
 
 const props = defineProps<{
@@ -8,7 +8,7 @@ const props = defineProps<{
   site?: string;
   waitSeconds?: number;
 }>();
-const emit = defineEmits<{ take: []; browse: []; ignore: [] }>();
+const emit = defineEmits<{ take: []; browse: []; ignore: []; open: [] }>();
 
 const left = ref(props.waitSeconds ?? 15);
 let timer: number | undefined;
@@ -34,6 +34,48 @@ function name() {
     return cut;
   }
 }
+
+// 长链接压成「主机名/…/文件名」，完整地址放在 title 里。
+const shortUrl = computed(() => {
+  try {
+    const parsed = new URL(props.url);
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    let tail = segments.pop() ?? "";
+    try {
+      tail = decodeURIComponent(tail);
+    } catch {
+      /* 保留原样 */
+    }
+    if (tail.length > 42) tail = `${tail.slice(0, 42)}…`;
+    return `${parsed.host}/…/${tail}`;
+  } catch {
+    return props.url.length > 60 ? `${props.url.slice(0, 60)}…` : props.url;
+  }
+});
+
+const copied = ref(false);
+let clickTimer: number | undefined;
+
+function openLink() {
+  window.clearTimeout(clickTimer);
+  clickTimer = window.setTimeout(() => emit("open"), 260);
+}
+
+async function copyLink() {
+  window.clearTimeout(clickTimer);
+  try {
+    await navigator.clipboard.writeText(props.url);
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = props.url;
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
+  }
+  copied.value = true;
+  window.setTimeout(() => (copied.value = false), 1600);
+}
 </script>
 
 <template>
@@ -54,7 +96,15 @@ function name() {
 
       <div class="handoff-file">
         <strong :title="name()">{{ name() }}</strong>
-        <small :title="url">{{ url }}</small>
+        <button
+          class="handoff-link"
+          type="button"
+          :title="`${url}\n单击在浏览器打开，双击复制`"
+          @click="openLink"
+          @dblclick="copyLink"
+        >
+          {{ copied ? "已复制链接" : shortUrl }}
+        </button>
       </div>
 
       <div class="handoff-meta">
@@ -137,10 +187,25 @@ function name() {
   font-size: 13px;
   word-break: break-all;
 }
-.handoff-file small {
-  color: var(--muted);
+.handoff-link {
+  justify-self: start;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
   font-size: 11.5px;
-  word-break: break-all;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--accent) 40%, transparent);
+  text-underline-offset: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.handoff-link:hover {
+  text-decoration-color: var(--accent);
 }
 .handoff-meta {
   color: var(--muted);

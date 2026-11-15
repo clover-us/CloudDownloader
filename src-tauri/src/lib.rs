@@ -313,6 +313,8 @@ fn open_in_browser(window: WebviewWindow, url: String) -> Result<(), String> {
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err("只支持 http/https 链接".into());
     }
+    // 这条链接马上会在浏览器里开始下载，让扩展别再把它接回来。
+    crate::bridge::ignore(parsed.as_str());
     std::process::Command::new("rundll32")
         .args(["url.dll,FileProtocolHandler", parsed.as_str()])
         .spawn()

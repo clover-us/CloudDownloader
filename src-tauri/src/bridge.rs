@@ -34,6 +34,11 @@ static LAST: Mutex<Option<LastHandoff>> = Mutex::new(None);
 /// The last time the extension said hello, so the title bar can tell an
 /// installed extension from a missing one without reading logs.
 static SEEN: Mutex<Option<Seen>> = Mutex::new(None);
+/// Links the app itself opened in the browser. Without this the extension would
+/// hand the same URL back the moment the browser starts downloading it.
+static IGNORED: Mutex<Vec<(String, u64)>> = Mutex::new(Vec::new());
+/// How long an ignored link stays ignored; long enough for the browser to start.
+const IGNORE_SECS: u64 = 60;
 /// A ping older than this is stale: browsers stop background timers when they
 /// are asleep, so the title bar only calls it missing after a generous gap.
 const SEEN_FRESH_SECS: u64 = 180;
@@ -200,6 +205,20 @@ fn answer(mut stream: TcpStream, app: &tauri::AppHandle) -> std::io::Result<()> 
     // talking to us; heartbeats also carry the version for the title bar.
     if origin.is_some() {
         mark_seen(extension_version(&body).as_deref());
+    }
+    // A link the user asked us to open in the browser would come straight back
+    // through /add, so tell the extension to leave that one alone.
+    if origin.is_some() {
+        if let Some(url) = payload_url(&body) {
+            if ignored(&url) {
+                return reply(
+                    &mut stream,
+                    200,
+                    origin.as_deref(),
+                    "{\"ok\":true,\"taken\":false}",
+                );
+            }
+        }
     }
     let enabled = bridge_enabled(app);
     let adds = request_line(&head).is_some_and(|(_, target)| target == "/add");
@@ -384,6 +403,30 @@ fn write_body(
     stream.flush()
 }
 
+/// 让扩展放过这条链接：应用自己刚把它交回浏览器。
+pub fn ignore(url: &str) {
+    let at = now();
+    let mut list = IGNORED.lock().unwrap_or_else(|error| error.into_inner());
+    list.retain(|(_, when)| at.saturating_sub(*when) < IGNORE_SECS);
+    list.push((url.to_string(), at));
+}
+
+fn ignored(url: &str) -> bool {
+    let at = now();
+    let mut list = IGNORED.lock().unwrap_or_else(|error| error.into_inner());
+    list.retain(|(_, when)| at.saturating_sub(*when) < IGNORE_SECS);
+    list.iter().any(|(known, _)| known == url)
+}
+
+/// The URL in an `/add` body, for the ignore check.
+fn payload_url(body: &[u8]) -> Option<String> {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .ok()?
+        .get("url")?
+        .as_str()
+        .map(str::to_string)
+}
+
 /// `chrome-extension://<id>` with the 32-letter id Chrome generates.
 fn extension_origin(origin: Option<&str>) -> Option<String> {
     let origin = origin?;
@@ -543,6 +586,23 @@ mod tests {
             assert_eq!(extension_origin(Some(origin)), None, "{origin}");
         }
         assert_eq!(extension_origin(None), None);
+    }
+
+    #[test]
+    fn ignored_links_are_remembered_for_a_while() {
+        let url = "https://example.test/a.iso";
+        assert!(!ignored(url));
+        ignore(url);
+        assert!(ignored(url));
+        assert!(!ignored("https://example.test/b.iso"));
+        // Entries older than the window drop out on the next look.
+        {
+            let mut list = IGNORED.lock().unwrap_or_else(|error| error.into_inner());
+            for entry in list.iter_mut() {
+                entry.1 = entry.1.saturating_sub(IGNORE_SECS + 1);
+            }
+        }
+        assert!(!ignored(url));
     }
 
     #[test]

@@ -740,6 +740,15 @@ async function takeHandoff() {
   await downloadBox.value?.receive(link, true);
 }
 
+async function openHandoffLink() {
+  const link = pendingHandoffs.value[0];
+  if (!link) return;
+  try {
+    await invoke("open_in_browser", { url: link.url });
+  } catch (failure) {
+    notice(String(failure));
+  }
+}
 async function browseHandoff() {
   const link = pendingHandoffs.value.shift();
   if (!link) return;
@@ -809,6 +818,7 @@ onUnmounted(() => {
       :site="siteOf(currentHandoff)"
       @take="takeHandoff"
       @browse="browseHandoff"
+      @open="openHandoffLink"
       @ignore="ignoreHandoff"
     />
     <aside class="sidebar">

@@ -99,7 +99,10 @@ chrome.downloads.onCreated.addListener(async (item) => {
     return;
   handing.add(item.id);
   try {
-    await handOff(url, item.filename, item.referrer);
+    const result = await handOff(url, item.filename, item.referrer);
+    // The app said this link should stay in the browser (it opened it itself,
+    // or the user chose the browser): leave the download running.
+    if (result && result.taken === false) return;
     // The app owns it now; stop the browser copy so the file is not fetched twice.
     await chrome.downloads.cancel(item.id);
     await chrome.downloads.erase({ id: item.id });
