@@ -30,7 +30,9 @@ if (Test-Path -LiteralPath $Out) { Remove-Item -LiteralPath $Out -Force }
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-$files = @(Get-ChildItem -LiteralPath $source -File -Recurse | Sort-Object FullName)
+$files = @(Get-ChildItem -LiteralPath $source -File -Recurse |
+    Where-Object { $_.Name -notin @('clouddownloader.crx', 'id.txt') } |
+    Sort-Object FullName)
 if ($files.Count -eq 0) { throw 'extension/ has no files' }
 
 $zip = [System.IO.Compression.ZipFile]::Open($Out, [System.IO.Compression.ZipArchiveMode]::Create)
@@ -52,3 +54,19 @@ finally { $zip.Dispose() }
 
 $size = (Get-Item -LiteralPath $Out).Length
 Write-Host ('Packed extension {0}: {1} ({2:N0} bytes, {3} files)' -f $version, $Out, $size, $files.Count)
+
+# Browsers only install from a signed CRX. The private key stays outside the
+# repository, like the updater key; without it the zip above is still usable
+# through "load unpacked".
+$key = Join-Path $HOME '.tauri\clouddownloader-extension.key'
+if (Test-Path -LiteralPath $key) {
+    $crx = Join-Path $source 'clouddownloader.crx'
+    node (Join-Path $PSScriptRoot 'crx3.mjs') $Out $key $crx
+    if ($LASTEXITCODE -ne 0) { throw 'CRX3 signing failed' }
+    Copy-Item -LiteralPath $crx -Destination (Join-Path $outDir "clouddownloader-extension-$version.crx") -Force
+    $id = (Get-Content -LiteralPath (Join-Path $source 'id.txt') -Raw).Trim()
+    Write-Host ('Policy install: ExtensionInstallForcelist = {0};http://127.0.0.1:17890/update.xml' -f $id)
+}
+else {
+    Write-Host 'No signing key at ~\.tauri\clouddownloader-extension.key; skipped the CRX build.'
+}

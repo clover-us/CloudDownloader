@@ -11,14 +11,30 @@
 3. 打开扩展的「选项」，点「测试连接」确认显示「已连接」（需先启动 CloudDownloader）。
 4. Chrome 可能提示扩展可以读取浏览记录和 Cookie，这是它把登录状态转交给下载器的前提。
 
-## 打包
+## 打包与签名
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/pack-extension.ps1
 ```
 
-输出 `package/clouddownloader-extension-<版本>.zip`，根目录就是 `manifest.json`，可直接上传到
-Chrome Web Store / Edge 加载项商店，也可以解压后按上面的步骤用「加载已解压的扩展程序」安装。
+输出 `package/clouddownloader-extension-<版本>.zip`（可直接上传商店，或解压后「加载已解压的扩展程序」）
+和同名的签名 `.crx`。签名私钥在 `%USERPROFILE%\.tauri\clouddownloader-extension.key`，只留在本机；
+公钥写在 `manifest.json` 的 `key` 里，所以扩展 ID 固定为 `bgmhpiikmknhjbgpedfgpelffapcagpa`——换钥匙会让
+ID 变化，策略安装和已保存的设置都会对不上。
+
+桌面端运行时会把这两样通过本机桥暴露出来：`http://127.0.0.1:17890/update.xml` 与
+`http://127.0.0.1:17890/extension.crx`，供浏览器扩展更新器读取。
+
+## 浏览器实际允许的安装方式
+
+Windows 上的 Chrome 从 33 起不允许从本地 CRX 或自托管地址静默安装扩展；非企业受管设备即使写了
+`ExtensionInstallForcelist`，Chrome 也会把它标成已阻止。所以「自动装」只有三条路：
+
+1. **商店上架**（推荐）：Edge 加载项免费、Chrome Web Store 5 美元，用户点一次「添加」；
+2. **企业策略 + 受管设备**：`ExtensionInstallForcelist` 指向 `http://127.0.0.1:17890/update.xml`
+   （打包脚本会打印这一行），浏览器会显示「由组织管理」；
+3. **手动**：加载已解压，或把 `.crx` 拖进 `edge://extensions`（Edge 支持，Chrome 不支持）。
+
 升级时把旧目录换成新的再点一次「重新加载」即可，扩展 ID 不变，设置会保留。
 
 ## 行为

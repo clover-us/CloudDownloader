@@ -28,3 +28,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Extension build output (signed by scripts/pack-extension.ps1)
+extension/clouddownloader.crx

@@ -187,6 +187,15 @@ fn answer(mut stream: TcpStream, app: &tauri::AppHandle) -> std::io::Result<()> 
         Err((status, message)) => return reply(&mut stream, status, None, &message),
     };
     let origin = extension_origin(header_value(&head, "origin").as_deref());
+    // Chrome's extension updater fetches these two without an Origin header, so
+    // they live before the extension check: they only hand out the packaged
+    // files, and the policy entry that points here is what authorises the
+    // install, not the request itself.
+    if let Some((method, target)) = request_line(&head) {
+        if method == "GET" && matches!(target.as_str(), "/update.xml" | "/extension.crx") {
+            return serve_extension(&mut stream, app, &target);
+        }
+    }
     // Any request from a real extension origin proves it is installed and
     // talking to us; heartbeats also carry the version for the title bar.
     if origin.is_some() {
@@ -311,6 +320,70 @@ fn extension_version(body: &[u8]) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Serves the extension package and its update manifest for the browser's
+/// extension updater. Only reads files that ship with the app.
+fn serve_extension(
+    stream: &mut TcpStream,
+    app: &tauri::AppHandle,
+    target: &str,
+) -> std::io::Result<()> {
+    let Some(directory) = crate::extension_dir(app) else {
+        return write_body(
+            stream,
+            404,
+            "text/plain; charset=utf-8",
+            b"extension folder missing",
+        );
+    };
+    if target == "/update.xml" {
+        let Some(id) = crate::extension_id(&directory) else {
+            return write_body(
+                stream,
+                404,
+                "text/plain; charset=utf-8",
+                b"extension id unavailable",
+            );
+        };
+        let manifest = std::fs::read_to_string(directory.join("manifest.json")).unwrap_or_default();
+        let version = serde_json::from_str::<serde_json::Value>(&manifest)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("version")
+                    .and_then(|version| version.as_str())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "0.0.0".into());
+        let body = update_manifest(&id, PORT.load(Ordering::Relaxed), &version);
+        return write_body(
+            stream,
+            200,
+            "application/xml; charset=utf-8",
+            body.as_bytes(),
+        );
+    }
+    match std::fs::read(directory.join("clouddownloader.crx")) {
+        Ok(bytes) => write_body(stream, 200, "application/x-chrome-extension", &bytes),
+        Err(_) => write_body(stream, 404, "text/plain; charset=utf-8", b"crx not built"),
+    }
+}
+
+fn write_body(
+    stream: &mut TcpStream,
+    status: u16,
+    content_type: &str,
+    body: &[u8],
+) -> std::io::Result<()> {
+    let head = format!(
+        "HTTP/1.1 {status} {}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+        reason(status),
+        body.len()
+    );
+    stream.write_all(head.as_bytes())?;
+    stream.write_all(body)?;
+    stream.flush()
+}
+
 /// `chrome-extension://<id>` with the 32-letter id Chrome generates.
 fn extension_origin(origin: Option<&str>) -> Option<String> {
     let origin = origin?;
@@ -378,13 +451,21 @@ fn read_request(stream: &mut TcpStream) -> Result<(String, Vec<u8>), (u16, Strin
     Ok((head, body))
 }
 
-fn reply(
-    stream: &mut TcpStream,
-    status: u16,
-    origin: Option<&str>,
-    body: &str,
-) -> std::io::Result<()> {
-    let reason = match status {
+/// The update manifest Chrome's extension updater reads. The codebase points
+/// back at this bridge, so the same file works on whatever port is configured.
+fn update_manifest(id: &str, port: u16, version: &str) -> String {
+    format!(
+        "<?xml version='1.0' encoding='UTF-8'?>\n\
+         <gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>\n  \
+         <app appid='{id}'>\n    \
+         <updatecheck codebase='http://127.0.0.1:{port}/extension.crx' version='{version}' />\n  \
+         </app>\n\
+         </gupdate>\n"
+    )
+}
+
+fn reason(status: u16) -> &'static str {
+    match status {
         200 => "OK",
         204 => "No Content",
         400 => "Bad Request",
@@ -397,7 +478,16 @@ fn reply(
         431 => "Request Header Fields Too Large",
         503 => "Service Unavailable",
         _ => "Error",
-    };
+    }
+}
+
+fn reply(
+    stream: &mut TcpStream,
+    status: u16,
+    origin: Option<&str>,
+    body: &str,
+) -> std::io::Result<()> {
+    let reason = reason(status);
     // The body is JSON in every case, including errors, so the extension can
     // show the reason instead of a generic failure.
     let body = if status == 204 {
@@ -453,6 +543,15 @@ mod tests {
             assert_eq!(extension_origin(Some(origin)), None, "{origin}");
         }
         assert_eq!(extension_origin(None), None);
+    }
+
+    #[test]
+    fn the_update_manifest_points_back_at_the_bridge() {
+        let xml = update_manifest("bgmhpiikmknhjbgpedfgpelffapcagpa", 18900, "0.2.0");
+        assert!(xml.contains("appid='bgmhpiikmknhjbgpedfgpelffapcagpa'"));
+        assert!(xml.contains("codebase='http://127.0.0.1:18900/extension.crx'"));
+        assert!(xml.contains("version='0.2.0'"));
+        assert!(xml.starts_with("<?xml"));
     }
 
     #[test]

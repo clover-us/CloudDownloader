@@ -266,26 +266,43 @@ fn bridge_status(
     Ok(bridge::status(enabled))
 }
 
-/// 扩展所在目录：安装版在资源目录里，开发时就是仓库的 extension/。
-#[tauri::command]
-fn extension_folder(window: WebviewWindow, app: tauri::AppHandle) -> Result<String, String> {
-    trusted(&window)?;
+/// 扩展目录：安装版在资源目录里，开发时就是仓库的 extension/。
+pub fn extension_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("extension");
+    // A dev build copies resources into target/, and that copy goes stale the
+    // moment the extension changes; run from the repository while developing.
+    if cfg!(debug_assertions) && repo.join("manifest.json").is_file() {
+        return Some(repo.canonicalize().unwrap_or(repo));
+    }
     if let Ok(base) = app.path().resource_dir() {
         let bundled = base.join("extension");
         if bundled.join("manifest.json").is_file() {
-            return Ok(bundled.to_string_lossy().into_owned());
+            return Some(bundled);
         }
     }
-    let dev = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("extension");
-    if dev.join("manifest.json").is_file() {
-        return dev
-            .canonicalize()
-            .map(|path| path.to_string_lossy().into_owned())
-            .map_err(|_| "找不到扩展目录".to_string());
-    }
-    Err("找不到扩展目录，请重新安装应用".into())
+    repo.join("manifest.json")
+        .is_file()
+        .then(|| repo.canonicalize().unwrap_or(repo))
+}
+
+/// 扩展 ID：由 manifest 里的 "key" 决定，打包脚本把它写在 extension/id.txt。
+pub fn extension_id(directory: &std::path::Path) -> Option<String> {
+    let id = std::fs::read_to_string(directory.join("id.txt"))
+        .ok()?
+        .trim()
+        .to_string();
+    (id.len() == 32 && id.bytes().all(|b| b.is_ascii_lowercase() && b <= b'p')).then_some(id)
+}
+
+/// 扩展所在目录，供标题栏的插件按钮打开安装位置。
+#[tauri::command]
+fn extension_folder(window: WebviewWindow, app: tauri::AppHandle) -> Result<String, String> {
+    trusted(&window)?;
+    extension_dir(&app)
+        .map(|path| path.to_string_lossy().into_owned())
+        .ok_or_else(|| "找不到扩展目录，请重新安装应用".to_string())
 }
 
 async fn start_task(

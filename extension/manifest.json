@@ -17,8 +17,12 @@
     "notifications",
     "alarms"
   ],
-  "host_permissions": ["<all_urls>"],
-  "background": { "service_worker": "background.js" },
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "options_page": "options.html",
   "action": {
     "default_title": "CloudDownloader 接力",
@@ -26,5 +30,6 @@
       "16": "icon16.png",
       "32": "icon32.png"
     }
-  }
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyh2/hbJ7nS53ZWjdQI1ZnmlKeMm2JN5uw+Y+cWkaNbLd/Lhb4rNyXfF3LLzvM6ibj1c0xRAKGUAVJLsYo716T2yVTxQVr+0DrNR5i1gHNvOeYGx3g7ONPFsbLcfCoHW/X9ftpXkgJbTepYtMMurfOOG5DnSOmHJnuCwC+M2fT7SX5ayjtajWcZfesxgkXRe/2bubNxku93HeBzw/kTcp7jvS8jca+bpHq7XL+YBXt5O7ROmFqm/K8PFMx1fLzfc8xGNudKm0eiNFuNPdP6GUrgtNnhZ5viMLVSWEQrNYllrOCM4MM/9BuonN2Uza8sxlgOlgXpg3WiGobGmArjyxkQIDAQAB"
 }
