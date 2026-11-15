@@ -6,7 +6,7 @@
 // public client id/version that the browser at pan.xunlei.com uses, and every
 // request is authenticated with the cookies captured from the login WebView.
 // The captcha sign is a deterministic md5 chain over the public web salt list.
-use super::cloud::{capacity, check, entry, Capacity, Page};
+use super::cloud::{capacity, check, entry, entry_timestamp, Capacity, Page};
 use super::{crypto, number, text, Session};
 use crate::model::*;
 use base64::Engine as _;
@@ -694,7 +694,73 @@ impl Session {
             account_id: self.cloud_identity().await?.0,
             names,
             cancelled: false,
+            provider: self.provider.key().into(),
         })
+    }
+
+    /// List the shares this account created on 迅雷云盘 (`GET /drive/v1/share`).
+    pub async fn xunlei_share_list(&self) -> Result<Vec<CreatedShare>, String> {
+        let account_id = self.cloud_identity().await?.0;
+        let captcha = self.captcha("GET:/drive/v1/share").await?;
+        let value = self
+            .api_get(
+                "/share",
+                &[("page", "1".to_string()), ("size", "100".to_string())],
+                &captcha,
+            )
+            .await?;
+        let items = value["share_list"]
+            .as_array()
+            .or_else(|| value["shares"].as_array())
+            .cloned()
+            .unwrap_or_default();
+        let mut shares = Vec::new();
+        for item in &items {
+            let url = text(&item["share_url"]);
+            if url.is_empty() {
+                continue;
+            }
+            let created_at = entry_timestamp(item, &["created_at", "create_time", "ctime"]);
+            let expired_at = entry_timestamp(item, &["expire_time", "expired_at"]);
+            let period = if expired_at > created_at {
+                u32::try_from((expired_at - created_at) / 86_400).unwrap_or(0)
+            } else {
+                0
+            };
+            let title = text(&item["title"]);
+            shares.push(CreatedShare {
+                id: text(&item["share_id"]),
+                url,
+                password: text(&item["pass_code"]),
+                period,
+                created_at,
+                account_id: account_id.clone(),
+                names: if title.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![title]
+                },
+                cancelled: item["status"]
+                    .as_str()
+                    .is_some_and(|status| status.eq_ignore_ascii_case("cancelled")),
+                provider: self.provider.key().into(),
+            });
+        }
+        Ok(shares)
+    }
+
+    /// Cancel one share created on 迅雷云盘 (`DELETE /drive/v1/share/{id}`).
+    pub async fn xunlei_cancel_share(&self, share: &CreatedShare) -> Result<(), String> {
+        let id = identifier_component(&share.id)?;
+        let captcha = self.captcha("DELETE:/drive/v1/share").await?;
+        self.api_send(
+            reqwest::Method::DELETE,
+            &format!("/share/{id}"),
+            None,
+            &captcha,
+        )
+        .await?;
+        Ok(())
     }
 
     async fn put_object(

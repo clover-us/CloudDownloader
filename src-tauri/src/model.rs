@@ -311,6 +311,10 @@ pub struct CreatedShare {
     pub names: Vec<String>,
     #[serde(default)]
     pub cancelled: bool,
+    /// Provider key (`quark`, `baidu`, `xunlei`). Older records were written
+    /// before this field existed, so it defaults to an empty string.
+    #[serde(default)]
+    pub provider: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

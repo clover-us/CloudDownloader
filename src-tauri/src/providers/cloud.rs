@@ -836,7 +836,99 @@ impl Session {
             account_id,
             names,
             cancelled: false,
+            provider: self.provider.key().into(),
         })
+    }
+
+    /// List the shares this account created on the provider, newest first.
+    ///
+    /// The 分享记录 page keeps a local copy so a link is never lost when the
+    /// network is down, but the account may also have shares created elsewhere,
+    /// so the page pulls this list once and merges it in. Quark and UC expose
+    /// it as `share/mypage/detail` on the share host.
+    pub async fn cloud_share_list(&self) -> Result<Vec<CreatedShare>, String> {
+        if !matches!(self.provider, Provider::Quark | Provider::Uc) {
+            return Err("该网盘暂不支持拉取分享记录".into());
+        }
+        let account_id = self.cloud_identity().await?.0;
+        let host = match self.provider {
+            Provider::Uc => "https://drive.uc.cn/1/clouddrive",
+            _ => "https://drive.quark.cn/1/clouddrive",
+        };
+        let value = check(
+            self.provider,
+            self.json(
+                self.transport
+                    .client
+                    .get(self.endpoint(&format!("{host}/share/mypage/detail")))
+                    .query(&[
+                        ("pr", "ucpro".to_string()),
+                        ("fr", "pc".to_string()),
+                        ("_page", "1".to_string()),
+                        ("_size", "100".to_string()),
+                        ("_order_field", "created_at".to_string()),
+                        ("_order_type", "desc".to_string()),
+                        ("_fetch_total", "1".to_string()),
+                    ])
+                    .header("Referer", self.provider.origin()),
+            )
+            .await?,
+        )?;
+        let mut shares = Vec::new();
+        for item in value["data"]["list"].as_array().into_iter().flatten() {
+            let url = text(&item["share_url"]);
+            if url.is_empty() {
+                continue;
+            }
+            let created_at = timestamp_seconds(&item["created_at"]);
+            let expired_at = timestamp_seconds(&item["expired_at"]);
+            let period = if expired_at > created_at {
+                u32::try_from((expired_at - created_at) / 86_400).unwrap_or(0)
+            } else {
+                0
+            };
+            let title = text(&item["title"]);
+            shares.push(CreatedShare {
+                id: text(&item["share_id"]),
+                url,
+                password: text(&item["passcode"]),
+                period,
+                created_at,
+                account_id: account_id.clone(),
+                names: if title.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![title]
+                },
+                cancelled: false,
+                provider: self.provider.key().into(),
+            });
+        }
+        Ok(shares)
+    }
+
+    /// Cancel one share created on the provider (`share/delete`).
+    pub async fn cloud_cancel_share(&self, share: &CreatedShare) -> Result<(), String> {
+        if !matches!(self.provider, Provider::Quark | Provider::Uc) {
+            return Err("该网盘暂不支持取消分享".into());
+        }
+        let host = match self.provider {
+            Provider::Uc => "https://drive.uc.cn/1/clouddrive",
+            _ => "https://drive.quark.cn/1/clouddrive",
+        };
+        check(
+            self.provider,
+            self.json(
+                self.transport
+                    .client
+                    .post(self.endpoint(&format!("{host}/share/delete")))
+                    .query(&[("pr", "ucpro".to_string()), ("fr", "pc".to_string())])
+                    .header("Referer", self.provider.origin())
+                    .json(&json!({ "share_id": share.id })),
+            )
+            .await?,
+        )?;
+        Ok(())
     }
 
     /// Upload one local file into a Quark personal drive folder.

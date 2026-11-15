@@ -441,14 +441,76 @@ pub async fn drive_cancel_share(
         .find(|s| s.id == id)
         .ok_or("分享记录不存在")?;
     if !share.cancelled {
-        session::connect(&app, Provider::Baidu)
-            .await?
-            .drive_cancel_share(&share)
-            .await?;
+        // Records written before the provider field existed are Baidu shares,
+        // which is the only provider that used to be cancellable.
+        let provider = Provider::ALL
+            .iter()
+            .copied()
+            .find(|p| p.key() == share.provider)
+            .unwrap_or(Provider::Baidu);
+        let session = session::connect(&app, provider).await?;
+        match provider {
+            Provider::Baidu => session.drive_cancel_share(&share).await?,
+            Provider::Quark | Provider::Uc => session.cloud_cancel_share(&share).await?,
+            Provider::Xunlei => session.xunlei_cancel_share(&share).await?,
+            _ => return Err("该网盘暂不支持取消分享".into()),
+        }
         share.cancelled = true;
         state.store.lock().unwrap().save_share(&share)?;
     }
     Ok(())
+}
+
+/// Pull the shares created on the provider and merge them into the local
+/// record so 分享记录 also shows links made from other clients.
+#[tauri::command]
+pub async fn drive_share_sync(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    provider: Provider,
+) -> Result<Vec<CreatedShare>, String> {
+    trusted(&window)?;
+    let session = session::connect(&app, provider).await?;
+    let remote = match provider {
+        Provider::Baidu => session.drive_share_list().await?,
+        Provider::Quark | Provider::Uc => session.cloud_share_list().await?,
+        Provider::Xunlei => session.xunlei_share_list().await?,
+        _ => return Err("该网盘暂不支持拉取分享记录".into()),
+    };
+    // Records saved before the provider field existed are guessed from the
+    // account that is currently signed in; resolve it before taking the lock.
+    let account_id = match provider {
+        Provider::Baidu => session.baidu_identity(None).await?.account_id,
+        _ => session.cloud_identity().await?.0,
+    };
+    let store = state.store.lock().unwrap();
+    let local = store.shares()?;
+    for saved in &local {
+        if saved.provider.is_empty() && saved.account_id == account_id {
+            let mut backfilled = saved.clone();
+            backfilled.provider = provider.key().into();
+            store.save_share(&backfilled)?;
+        }
+    }
+    for share in &remote {
+        let mut merged = share.clone();
+        if let Some(saved) = local
+            .iter()
+            .find(|s| s.id == share.id && s.account_id == share.account_id)
+        {
+            if merged.names.is_empty() && !saved.names.is_empty() {
+                merged.names = saved.names.clone();
+            }
+            merged.cancelled |= saved.cancelled;
+        }
+        store.save_share(&merged)?;
+    }
+    Ok(store
+        .shares()?
+        .into_iter()
+        .filter(|s| s.provider == provider.key())
+        .collect())
 }
 
 #[tauri::command]

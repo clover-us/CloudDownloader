@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Copy, Link, LoaderCircle, Share2, X } from "@lucide/vue";
@@ -10,7 +10,10 @@ import {
   isShareExpired as expired,
   shareText,
 } from "./cloud";
-const props = defineProps<{ shares: CreatedShare[] }>();
+const props = defineProps<{
+  shares: CreatedShare[];
+  providers: { id: string; name: string; color: string; initial: string }[];
+}>();
 const emit = defineEmits<{
   changed: [];
   error: [message: string];
@@ -21,19 +24,32 @@ const target = ref<CreatedShare | null>(null);
 const batchCancel = ref(false);
 const batch = ref<string[]>([]);
 const busy = ref(false);
+const syncing = ref(false);
+const active = ref(props.providers[0]?.id ?? "");
+/**
+ * Records written before this version carry no provider, so they stay visible
+ * in every tab until the next sync backfills them.
+ */
+const visible = computed(() =>
+  props.shares.filter(
+    (s) => !s.provider || !active.value || s.provider === active.value,
+  ),
+);
+const countFor = (provider: string) =>
+  props.shares.filter((s) => s.provider === provider).length;
 const live = (s: CreatedShare) => !s.cancelled && !expired(s);
 const selected = computed(() =>
-  props.shares.filter((s) => batch.value.includes(s.id)),
+  visible.value.filter((s) => batch.value.includes(s.id)),
 );
 const allSelected = computed(
-  () => props.shares.length > 0 && batch.value.length === props.shares.length,
+  () => visible.value.length > 0 && batch.value.length === visible.value.length,
 );
 const someSelected = computed(
   () => batch.value.length > 0 && !allSelected.value,
 );
 const cancellable = computed(() => selected.value.filter(live));
 function toggleAll() {
-  batch.value = allSelected.value ? [] : props.shares.map((s) => s.id);
+  batch.value = allSelected.value ? [] : visible.value.map((s) => s.id);
 }
 function toggle(id: string) {
   batch.value = batch.value.includes(id)
@@ -107,17 +123,83 @@ function askCancel(s: CreatedShare) {
   batchCancel.value = false;
   target.value = s;
 }
+/**
+ * Pull the shares created on the provider so records made elsewhere show up
+ * here too. The first pull per tab is silent: a provider whose list endpoint
+ * is unavailable should not throw an error banner at page load.
+ */
+async function sync(quiet: boolean) {
+  if (!active.value || syncing.value) return;
+  syncing.value = true;
+  try {
+    await invoke("drive_share_sync", { provider: active.value });
+    emit("changed");
+  } catch (e) {
+    if (!quiet) emit("error", String(e));
+  } finally {
+    syncing.value = false;
+  }
+}
+watch(active, () => {
+  batch.value = [];
+  void sync(true);
+});
+watch(
+  () => props.providers,
+  (providers) => {
+    if (!providers.some((p) => p.id === active.value)) {
+      active.value = providers[0]?.id ?? "";
+    }
+  },
+);
+onMounted(() => void sync(true));
 </script>
 <template>
   <div class="cloud-page-toolbar">
-    <p class="account-intro">显示通过本程序创建的分享。</p>
+    <p class="account-intro">
+      按网盘查看分享记录，登录后会同步网盘上已有的分享。
+    </p>
     <button class="primary" @click="emit('browse')">
       <Share2 :size="16" />选择文件分享
     </button>
   </div>
+  <div
+    v-if="providers.length"
+    class="drive-providers"
+    role="group"
+    aria-label="按网盘查看分享记录"
+  >
+    <button
+      v-for="provider in providers"
+      :key="provider.id"
+      :class="{ selected: active === provider.id }"
+      :aria-pressed="active === provider.id"
+      :disabled="busy"
+      @click="active = provider.id"
+    >
+      <span
+        class="drive-provider-avatar"
+        :style="{ background: provider.color }"
+        >{{ provider.initial }}</span
+      >{{ provider.name
+      }}<span v-if="countFor(provider.id)" class="provider-count">{{
+        countFor(provider.id)
+      }}</span>
+    </button>
+    <button
+      class="drive-provider-add"
+      :disabled="syncing"
+      @click="sync(false)"
+    >
+      <LoaderCircle v-if="syncing" :size="14" class="spinning" /><Share2
+        v-else
+        :size="14"
+      />从网盘刷新
+    </button>
+  </div>
   <section class="card task-list">
     <div
-      v-if="shares.length"
+      v-if="visible.length"
       class="task-list-head"
       :class="{ 'head-selected': batch.length }"
     >
@@ -158,16 +240,12 @@ function askCancel(s: CreatedShare) {
       <span v-else class="head-label">分享记录</span>
       <span class="batch-spacer" />
     </div>
-    <div v-if="!shares.length" class="empty-state">
+    <div v-if="!visible.length" class="empty-state">
       <span class="empty-illustration"><Link :size="40" /></span>
       <h3>还没有分享记录</h3>
       <p>在「我的网盘」中选择文件，设置有效期和提取码。</p>
     </div>
-    <article
-      v-for="s in shares"
-      :key="s.id"
-      class="share-record"
-    >
+    <article v-for="s in visible" :key="s.id" class="share-record">
       <div class="task-name-row">
         <label class="task-select" :title="batch.includes(s.id) ? '取消选择' : '选择'">
           <input

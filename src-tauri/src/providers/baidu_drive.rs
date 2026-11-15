@@ -1,4 +1,4 @@
-use super::cloud::{capacity, Capacity};
+use super::cloud::{capacity, entry_timestamp, Capacity};
 use super::{number, text, Download, Session};
 use crate::model::*;
 use reqwest::multipart::{Form, Part};
@@ -360,6 +360,7 @@ impl Session {
             account_id: identity.account_id,
             names: fresh.iter().map(|f| f.name.clone()).collect(),
             cancelled: false,
+            provider: self.provider.key().into(),
         })
     }
 
@@ -374,6 +375,69 @@ impl Session {
             .await?,
         )?;
         Ok(())
+    }
+
+    /// List the shares created by this account (`/api/share/list`), so the
+    /// 分享记录 page also shows links made outside the app.
+    pub async fn drive_share_list(&self) -> Result<Vec<CreatedShare>, String> {
+        let identity = self.baidu_identity(None).await?;
+        let mut shares = Vec::new();
+        for page in 1..=10u32 {
+            let data = check(
+                self.json(self.baidu_get("/api/share/list").query(&[
+                    ("page", page.to_string()),
+                    ("num", "100".to_string()),
+                    ("order", "time".to_string()),
+                    ("desc", "1".to_string()),
+                    ("bdstoken", identity.token.clone()),
+                ]))
+                .await?,
+            )?;
+            let items = data["list"]
+                .as_array()
+                .or_else(|| data["data"]["list"].as_array())
+                .cloned()
+                .unwrap_or_default();
+            for item in &items {
+                let short = text(&item["shorturl"]);
+                let url = if short.starts_with("http") {
+                    short
+                } else if short.is_empty() {
+                    String::new()
+                } else if short.starts_with('/') {
+                    format!("https://pan.baidu.com{short}")
+                } else {
+                    format!("https://pan.baidu.com/s/{short}")
+                };
+                if url.is_empty() {
+                    continue;
+                }
+                let names = item["file_list"]
+                    .as_array()
+                    .map(|files| {
+                        files
+                            .iter()
+                            .filter_map(|file| file["name"].as_str().map(str::to_string))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                shares.push(CreatedShare {
+                    id: text(&item["shareid"]),
+                    url,
+                    password: text(&item["pwd"]),
+                    period: u32::try_from(item["period"].as_u64().unwrap_or(0)).unwrap_or(0),
+                    created_at: entry_timestamp(item, &["ctime", "create_time"]),
+                    account_id: identity.account_id.clone(),
+                    names,
+                    cancelled: false,
+                    provider: self.provider.key().into(),
+                });
+            }
+            if items.len() < 100 {
+                break;
+            }
+        }
+        Ok(shares)
     }
 
     pub async fn drive_rename(

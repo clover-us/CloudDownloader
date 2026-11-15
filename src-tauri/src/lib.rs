@@ -1410,6 +1410,7 @@ pub fn run() {
             drive_commands::drive_rename_at,
             drive_commands::drive_delete_at,
             drive_commands::drive_share,
+            drive_commands::drive_share_sync,
             drive_commands::drive_cancel_share,
             drive_commands::upload_enqueue,
             drive_commands::upload_action,

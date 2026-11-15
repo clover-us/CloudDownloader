@@ -1254,6 +1254,21 @@ button.directory:hover {
   color: var(--accent);
   background: var(--accent-soft);
 }
+.provider-count {
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--surface-hover);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 16px;
+  text-align: center;
+}
+.drive-providers button.selected .provider-count {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 .drive-workspace {
   display: flex;
   flex-direction: column;

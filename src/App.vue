@@ -1078,6 +1078,7 @@ onUnmounted(() => {
       <SharePanel
         v-else-if="tab === 'shares'"
         :shares="state.shares"
+        :providers="connectedProviders"
         @changed="refresh"
         @error="error = $event"
         @notice="notice"

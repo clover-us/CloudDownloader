@@ -1075,17 +1075,19 @@ check(
 // --- S. Share records reuse the upload list's batch header ---
 await page.evaluate(() => {
   const state = window.__MOCK__.state;
+  state.loggedIn.xunlei = true;
   state.shares.length = 0;
   state.shares.push(
     {
       id: "share-live",
-      url: "https://pan.baidu.com/s/1liveShare",
+      url: "https://pan.quark.cn/s/1liveShare",
       password: "aaaa",
       period: 7,
       createdAt: Math.floor(Date.now() / 1000),
-      accountId: "baidu-account",
+      accountId: "quark-account",
       names: ["电影合集.zip"],
       cancelled: false,
+      provider: "quark",
     },
     {
       id: "share-gone",
@@ -1096,6 +1098,18 @@ await page.evaluate(() => {
       accountId: "quark-account",
       names: ["文档.pdf"],
       cancelled: true,
+      provider: "quark",
+    },
+    {
+      id: "share-xunlei",
+      url: "https://pan.xunlei.com/s/1xunleiShare",
+      password: "",
+      period: 7,
+      createdAt: Math.floor(Date.now() / 1000),
+      accountId: "xunlei-account",
+      names: ["迅雷专属.mkv"],
+      cancelled: false,
+      provider: "xunlei",
     },
   );
   window.__MOCK__.emit("tasks-changed");
@@ -1110,6 +1124,13 @@ check(
     "分享记录",
   ),
   await page.locator(".task-list-head").innerText(),
+);
+check(
+  "S1b share tabs filter by provider",
+  (await page.locator(".drive-providers button.selected").innerText()).includes(
+    "夸克网盘",
+  ),
+  await page.locator(".drive-providers").innerText(),
 );
 await page.locator(".task-list-head .task-select-all input").check();
 await page.waitForSelector(".task-list-head .batch-count");
@@ -1158,8 +1179,31 @@ check(
   "S6 share link is a clickable link to the share page",
   (await shareLinks.count()) === 2 &&
     ((await shareLinks.first().getAttribute("href")) ?? "").startsWith(
-      "https://pan.baidu.com/s/",
+      "https://pan.quark.cn/s/",
     ),
+);
+await page
+  .locator(".drive-providers button", { hasText: "迅雷网盘" })
+  .click();
+await page.waitForFunction(
+  () => document.querySelectorAll("article.share-record").length === 1,
+);
+check(
+  "S7 switching provider tab shows only that provider's shares",
+  (await page.locator("article.share-record").first().innerText()).includes(
+    "迅雷专属.mkv",
+  ),
+  await page.locator("article.share-record").first().innerText(),
+);
+await page.locator(".drive-provider-add").click();
+await page.waitForFunction(() =>
+  window.__MOCK__.lastCall("drive_share_sync"),
+);
+const syncCall = await mock("lastCall", "drive_share_sync");
+check(
+  "S8 refreshing pulls share records for the active provider",
+  syncCall?.args?.provider === "xunlei",
+  JSON.stringify(syncCall?.args),
 );
 
 // --- N. Title bar plugin button ---

@@ -41,6 +41,8 @@ export type CreatedShare = {
   accountId: string;
   names: string[];
   cancelled: boolean;
+  /** Provider key; empty for records saved before the field existed. */
+  provider?: string;
 };
 export const formatBytes = (n: number) => {
   if (!n) return "0 B";

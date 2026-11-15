@@ -463,9 +463,14 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
       accountId: args.accountId,
       names,
       cancelled: false,
+      provider,
     };
     state.shares.push(share);
     return share;
+  }
+  if (cmd === "drive_share_sync") {
+    // 后端会合并网盘上的记录并回填旧记录的 provider，这里只回该网盘的现有记录。
+    return state.shares.filter((item) => item.provider === args.provider);
   }
   if (cmd === "drive_rename_at") {
     const file = args.file as Record<string, unknown>;
