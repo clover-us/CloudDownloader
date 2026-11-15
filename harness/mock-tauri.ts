@@ -488,7 +488,7 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
       enabled: settings.browserBridge,
       last: state.lastHandoff,
       seenAt: Math.floor(Date.now() / 1000) - 20,
-      version: "0.2.1",
+      version: "0.2.2",
     };
   if (cmd === "extension_folder") return "D:\\CloudDownloader\\extension";
   if (
