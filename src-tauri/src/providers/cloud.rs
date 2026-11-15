@@ -24,6 +24,51 @@ pub struct Listing {
     pub next_cursor: Option<String>,
 }
 
+/// 网盘容量快照（字节）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Capacity {
+    pub total: u64,
+    pub used: u64,
+}
+
+impl Capacity {
+    pub fn free(&self) -> u64 {
+        self.total.saturating_sub(self.used)
+    }
+    /// 还差多少字节才放得下 `needed`；返回 0 表示空间够用。
+    pub fn shortfall(&self, needed: u64) -> u64 {
+        needed.saturating_sub(self.free())
+    }
+}
+
+/// 解析 member 接口的容量字段。总容量缺失时判为接口无效，避免拿 0 误拦上传。
+pub fn capacity(value: &Value) -> Result<Capacity, String> {
+    let data = &value["data"];
+    let total = ["total_capacity", "capacity", "total"]
+        .iter()
+        .map(|key| number(&data[*key]))
+        .find(|value| *value > 0)
+        .ok_or("夸克网盘未返回总容量，无法预检空间")?;
+    let used = ["use_capacity", "used_capacity", "used"]
+        .iter()
+        .map(|key| number(&data[*key]))
+        .find(|value| *value > 0)
+        .unwrap_or(0);
+    Ok(Capacity { total, used })
+}
+
+/// 面向界面的容量文案：影响面只有错误提示，用 1024 进制并保留一位小数。
+pub fn human_size(bytes: u64) -> String {
+    const MIB: f64 = 1024.0 * 1024.0;
+    const GIB: f64 = 1024.0 * MIB;
+    let value = bytes as f64;
+    if value >= GIB {
+        format!("{:.2} GB", value / GIB)
+    } else {
+        format!("{:.1} MB", value / MIB)
+    }
+}
+
 pub fn check(provider: Provider, value: Value) -> Result<Value, String> {
     let valid = match provider {
         Provider::Quark | Provider::Uc => value["code"].as_i64() == Some(0),
@@ -74,6 +119,24 @@ pub fn check(provider: Provider, value: Value) -> Result<Value, String> {
     }
     if provider == Provider::Pan115 && code == "990001" {
         return Err("115 登录会话无效（错误码 990001），请在官方窗口重新登录后刷新登录状态".into());
+    }
+    if matches!(provider, Provider::Quark | Provider::Uc) {
+        // 官方 SDK 文档：32003 主盘空间不足，32004 单文件超过大小上限。
+        match code.as_str() {
+            "32003" => {
+                return Err(format!(
+                    "{}主盘空间不足（错误码 32003），请清理网盘空间并清空回收站后再上传",
+                    provider.name()
+                ))
+            }
+            "32004" => {
+                return Err(format!(
+                    "{}单个文件超过大小上限（错误码 32004），请压缩或拆分后再上传",
+                    provider.name()
+                ))
+            }
+            _ => (),
+        }
     }
     Err(format!(
         "{}请求未成功（错误码 {}），请检查登录状态、提取码、会员权限或官方验证提示",
@@ -369,6 +432,36 @@ impl Session {
             crypto::md5_hex(&format!("{}:{id}", self.provider.key())),
             name,
         ))
+    }
+    /// 上传前的空间预检。夸克/UC 的 member 接口返回总容量与已用容量，
+    /// 上传前先比对一次，就不会出现「传了一半才报 32003」。
+    pub async fn cloud_capacity(&self) -> Result<Capacity, String> {
+        let value = match self.provider {
+            Provider::Quark => check(
+                self.provider,
+                self.json(
+                    self.transport
+                        .client
+                        .get(self.endpoint("https://pan.quark.cn/1/clouddrive/member"))
+                        .query(&[("pr", "ucpro"), ("fr", "pc")])
+                        .header("Referer", "https://pan.quark.cn/"),
+                )
+                .await?,
+            )?,
+            Provider::Uc => check(
+                self.provider,
+                self.json(
+                    self.transport
+                        .client
+                        .get(self.endpoint("https://pc-api.uc.cn/1/clouddrive/member"))
+                        .query(&[("pr", "UCBrowser"), ("fr", "pc")])
+                        .header("Referer", "https://drive.uc.cn/"),
+                )
+                .await?,
+            )?,
+            _ => return Err("此网盘暂不支持容量查询".into()),
+        };
+        capacity(&value)
     }
     pub async fn cloud_page(
         &self,

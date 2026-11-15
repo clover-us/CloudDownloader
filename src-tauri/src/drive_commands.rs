@@ -613,6 +613,32 @@ pub async fn upload_enqueue(
         }
         taken.insert(record.name.clone());
     }
+    // 夸克在上传前先查一次容量：空间不够就别建任务，省得传到一半才报 32003。
+    if provider == Provider::Quark {
+        // 排队中/进行中的任务最终也要占地方，一并计入，避免两批任务各自觉得「放得下」。
+        let queued: u64 = existing
+            .iter()
+            .filter(|task| {
+                task.provider == provider
+                    && task.account_id == account_id
+                    && !matches!(task.status.as_str(), "complete" | "error")
+            })
+            .map(|task| task.size.saturating_sub(task.completed))
+            .sum();
+        let needed = records.iter().map(|record| record.size).sum::<u64>() + queued;
+        // 容量接口失败只跳过预检，不拦上传 —— 上传本身还有 32003 的精确提示兜底。
+        if let Ok(space) = session.cloud_capacity().await {
+            let shortfall = space.shortfall(needed);
+            if shortfall > 0 {
+                return Err(format!(
+                    "夸克网盘主盘空间不足：剩余 {}，本次上传需要 {}，还差 {}。请清理网盘空间或清空回收站后重试",
+                    cloud::human_size(space.free()),
+                    cloud::human_size(needed),
+                    cloud::human_size(shortfall)
+                ));
+            }
+        }
+    }
     for task in &records {
         state.store.lock().unwrap().save_upload(task)?;
         state.uploads.start(app.clone(), task.clone())?;

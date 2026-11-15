@@ -69,6 +69,39 @@ fn pan115_expired_session_has_a_specific_login_message() {
 }
 
 #[test]
+fn quark_capacity_precheck_uses_total_and_used_bytes() {
+    let space =
+        cloud::capacity(&json!({"code":0,"data":{"total_capacity":10_000,"use_capacity":9_500}}))
+            .unwrap();
+    assert_eq!(space.free(), 500);
+    assert_eq!(space.shortfall(400), 0);
+    assert_eq!(space.shortfall(800), 300);
+    // 已用超过总量（共享容量变动）时不能下溢成天文数字。
+    let over = cloud::capacity(&json!({"data":{"total_capacity":100,"use_capacity":400}})).unwrap();
+    assert_eq!(over.free(), 0);
+    assert_eq!(over.shortfall(1), 1);
+    // 没有总容量字段就不能猜，直接判为接口无效。
+    assert!(cloud::capacity(&json!({"data":{"use_capacity":1}})).is_err());
+    assert_eq!(cloud::human_size(1024 * 1024 * 1024), "1.00 GB");
+}
+
+#[test]
+fn quark_upload_error_codes_explain_themselves() {
+    // 夸克上传接口用 32003/32004 表示空间不足与单文件超限，不能落到通用提示。
+    let space = cloud::check(Provider::Quark, json!({"code":32003,"message":"space"})).unwrap_err();
+    assert!(
+        space.contains("32003") && space.contains("空间不足"),
+        "{space}"
+    );
+    assert!(!space.contains("提取码"), "{space}");
+    let size = cloud::check(Provider::Uc, json!({"code":32004,"message":"size"})).unwrap_err();
+    assert!(
+        size.contains("32004") && size.contains("大小上限"),
+        "{size}"
+    );
+}
+
+#[test]
 fn new_share_routes_and_code_precedence() {
     for (address, provider, id, code) in [
         (
