@@ -377,18 +377,16 @@ impl Session {
         Ok(())
     }
 
-    /// List the shares created by this account (`/api/share/list`), so the
-    /// 分享记录 page also shows links made outside the app.
+    /// List the shares created by this account (`/share/record`, the endpoint the
+    /// web 分享 page uses), so the 分享记录 page also shows links made outside the app.
     pub async fn drive_share_list(&self) -> Result<Vec<CreatedShare>, String> {
         let identity = self.baidu_identity(None).await?;
         let mut shares = Vec::new();
         for page in 1..=10u32 {
             let data = check(
-                self.json(self.baidu_get("/api/share/list").query(&[
+                self.json(self.baidu_get("/share/record").query(&[
                     ("page", page.to_string()),
                     ("num", "100".to_string()),
-                    ("order", "time".to_string()),
-                    ("desc", "1".to_string()),
                     ("bdstoken", identity.token.clone()),
                 ]))
                 .await?,
