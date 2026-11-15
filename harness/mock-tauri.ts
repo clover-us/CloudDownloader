@@ -482,6 +482,11 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
     share.cancelled = true;
     return null;
   }
+  if (cmd === "drive_forget_share") {
+    const ids = new Set(((args.ids as string[]) ?? []).map(String));
+    state.shares = state.shares.filter((item) => !ids.has(String(item.id)));
+    return null;
+  }
   if (cmd === "drive_delete_at") {
     return null;
   }

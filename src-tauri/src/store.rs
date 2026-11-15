@@ -117,6 +117,12 @@ impl Store {
     pub fn save_share(&self, share: &crate::model::CreatedShare) -> Result<(), String> {
         self.save_record("shares", &share.id, share)
     }
+    pub fn remove_share(&self, id: &str) -> Result<(), String> {
+        self.0
+            .execute("DELETE FROM shares WHERE id=?1", [id])
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
     fn read_records<T: serde::de::DeserializeOwned>(&self, table: &str) -> Result<Vec<T>, String> {
         // Table names are internal constants, never user input.
         let mut stmt = self

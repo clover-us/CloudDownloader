@@ -461,6 +461,22 @@ pub async fn drive_cancel_share(
     Ok(())
 }
 
+/// Drop local share records. The link itself is untouched on the provider, so
+/// this only forgets the row in 分享记录; use 取消分享 to revoke it.
+#[tauri::command]
+pub async fn drive_forget_share(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+) -> Result<(), String> {
+    trusted(&window)?;
+    let store = state.store.lock().unwrap();
+    for id in &ids {
+        store.remove_share(id)?;
+    }
+    Ok(())
+}
+
 /// Pull the shares created on the provider and merge them into the local
 /// record so 分享记录 also shows links made from other clients.
 #[tauri::command]

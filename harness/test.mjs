@@ -1205,6 +1205,35 @@ check(
   syncCall?.args?.provider === "xunlei",
   JSON.stringify(syncCall?.args),
 );
+await page
+  .locator('article.share-record button[aria-label="删除分享记录"]')
+  .click();
+await page.waitForSelector(".confirm-dialog");
+const forgetDialog = (
+  await page.locator(".confirm-dialog").innerText()
+).replace(/\s+/g, " ");
+check(
+  "S9 deleting a share record asks before forgetting it",
+  forgetDialog.includes("删除这条分享记录？") &&
+    forgetDialog.includes("取消分享"),
+  forgetDialog.slice(0, 140),
+);
+await page.locator(".confirm-dialog button", { hasText: "删除记录" }).click();
+await page.waitForFunction(() =>
+  window.__MOCK__.lastCall("drive_forget_share"),
+);
+const forgetCall = await mock("lastCall", "drive_forget_share");
+await page.waitForFunction(
+  () => document.querySelectorAll("article.share-record").length === 0,
+);
+check(
+  "S10 forgetting removes the row without touching the provider",
+  ((forgetCall?.args?.ids ?? [])).includes("share-xunlei") &&
+    (await page.evaluate(() =>
+      window.__MOCK__.state.shares.some((s) => s.id === "share-xunlei"),
+    )) === false,
+  JSON.stringify(forgetCall?.args),
+);
 
 // --- N. Title bar plugin button ---
 await page.locator(".plugin-toggle").click();

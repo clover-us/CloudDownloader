@@ -8,6 +8,7 @@ import {
   LoaderCircle,
   RefreshCw,
   Share2,
+  Trash2,
   X,
 } from "@lucide/vue";
 import {
@@ -31,6 +32,12 @@ const target = ref<CreatedShare | null>(null);
 const batchCancel = ref(false);
 const batch = ref<string[]>([]);
 const busy = ref(false);
+/** "cancel" revokes links on the provider, "forget" only drops local rows. */
+const mode = ref<"cancel" | "forget" | "">("");
+const forgetIds = ref<string[]>([]);
+const forgetting = computed(() =>
+  props.shares.filter((s) => forgetIds.value.includes(s.id)),
+);
 const syncing = ref(false);
 const active = ref(props.providers[0]?.id ?? "");
 /**
@@ -88,6 +95,7 @@ async function copySelected() {
 function askCancelSelected() {
   target.value = null;
   batchCancel.value = true;
+  mode.value = "cancel";
 }
 async function cancelOne(s: CreatedShare) {
   await invoke("drive_cancel_share", { id: s.id });
@@ -113,8 +121,7 @@ async function cancel() {
   }
   busy.value = false;
   if (!done && !failure) return;
-  target.value = null;
-  batchCancel.value = false;
+  closeDialog();
   batch.value = [];
   emit("changed");
   if (failure) {
@@ -129,6 +136,46 @@ async function cancel() {
 function askCancel(s: CreatedShare) {
   batchCancel.value = false;
   target.value = s;
+  mode.value = "cancel";
+}
+function askForget(s: CreatedShare) {
+  target.value = null;
+  batchCancel.value = false;
+  forgetIds.value = [s.id];
+  mode.value = "forget";
+}
+function askForgetSelected() {
+  target.value = null;
+  batchCancel.value = false;
+  forgetIds.value = batch.value.slice();
+  mode.value = "forget";
+}
+function closeDialog() {
+  target.value = null;
+  batchCancel.value = false;
+  forgetIds.value = [];
+  mode.value = "";
+}
+/** Forget the row(s) locally; providers keep the link alive. */
+async function forget() {
+  if (!forgetIds.value.length) return;
+  busy.value = true;
+  try {
+    await invoke("drive_forget_share", { ids: forgetIds.value });
+    const count = forgetIds.value.length;
+    closeDialog();
+    batch.value = [];
+    emit("changed");
+    emit("notice", count > 1 ? `已删除 ${count} 条分享记录` : "已删除分享记录");
+  } catch (e) {
+    emit("error", String(e));
+  } finally {
+    busy.value = false;
+  }
+}
+function confirm() {
+  if (mode.value === "forget") void forget();
+  else void cancel();
 }
 /**
  * Pull the shares created on the provider so records made elsewhere show up
@@ -230,6 +277,13 @@ onMounted(() => void sync(true));
           >
             <X :size="15" />取消分享
           </button>
+          <button
+            class="batch-btn"
+            :disabled="busy"
+            @click="askForgetSelected"
+          >
+            <Trash2 :size="15" />删除记录
+          </button>
           <LoaderCircle v-if="busy" :size="15" class="spinning" />
         </div>
       </template>
@@ -268,10 +322,7 @@ onMounted(() => void sync(true));
       <div class="task-file-icon"><Share2 :size="25" /></div>
       <div class="task-details">
         <div class="task-name-row">
-          <strong :title="s.names.join('、')">{{ s.names.join("、") }}</strong
-          ><span class="status-pill" :class="{ complete: live(s) }">{{
-            s.cancelled ? "已取消" : expired(s) ? "已过期" : "分享中"
-          }}</span>
+          <strong :title="s.names.join('、')">{{ s.names.join("、") }}</strong>
         </div>
         <div class="share-link-text">
           <Link :size="14" /><a
@@ -288,56 +339,88 @@ onMounted(() => void sync(true));
           <span>· {{ formatSharePeriod(s.period) }}</span>
         </div>
       </div>
-      <div v-if="live(s)" class="task-actions">
+      <div class="share-state">
+        <span class="status-pill" :class="{ complete: live(s) }">{{
+          s.cancelled ? "已取消" : expired(s) ? "已过期" : "分享中"
+        }}</span>
+      </div>
+      <div class="task-actions">
+        <template v-if="live(s)">
+          <button
+            class="icon-button"
+            title="复制分享"
+            aria-label="复制分享"
+            @click="copy(s)"
+          >
+            <Copy :size="17" /></button
+          ><button
+            class="icon-button"
+            title="取消分享"
+            aria-label="取消分享"
+            @click="askCancel(s)"
+          >
+            <X :size="17" />
+          </button>
+        </template>
         <button
           class="icon-button"
-          title="复制分享"
-          aria-label="复制分享"
-          @click="copy(s)"
+          title="删除记录"
+          aria-label="删除分享记录"
+          @click="askForget(s)"
         >
-          <Copy :size="17" /></button
-        ><button
-          class="icon-button"
-          title="取消分享"
-          aria-label="取消分享"
-          @click="askCancel(s)"
-        >
-          <X :size="17" />
+          <Trash2 :size="17" />
         </button>
       </div>
     </article>
   </section>
   <Teleport to="body"
-    ><div v-if="target || batchCancel" class="modal-backdrop">
+    ><div v-if="mode" class="modal-backdrop">
       <div class="confirm-dialog">
-        <h2>
-          {{
-            batchCancel
-              ? `取消所选的 ${cancellable.length} 个分享？`
-              : "取消这个分享？"
-          }}
-        </h2>
-        <p v-if="batchCancel">
-          取消后这些链接将无法访问，网盘文件会保留。
-        </p>
-        <p v-else-if="target">
-          {{ target.names.join("、")
-          }}<br />取消后原链接将无法访问，网盘文件会保留。
-        </p>
-        <div class="button-row">
-          <button
-            class="secondary"
-            :disabled="busy"
-            @click="
-              target = null;
-              batchCancel = false;
-            "
-          >
-            返回</button
-          ><button class="danger" :disabled="busy" @click="cancel">
-            {{ busy ? "正在取消…" : "取消分享" }}
-          </button>
-        </div>
+        <template v-if="mode === 'forget'">
+          <h2>
+            {{
+              forgetting.length > 1
+                ? `删除所选的 ${forgetting.length} 条分享记录？`
+                : "删除这条分享记录？"
+            }}
+          </h2>
+          <p>
+            {{ forgetting.map((s) => s.names.join("、")).join("；") }}
+          </p>
+          <p>
+            只删除本机的记录；如果链接在网盘上仍然有效，删除后依旧可以访问，需要让它失效请用「取消分享」。
+          </p>
+          <div class="button-row">
+            <button class="secondary" :disabled="busy" @click="closeDialog">
+              返回</button
+            ><button class="danger" :disabled="busy" @click="forget">
+              {{ busy ? "正在删除…" : "删除记录" }}
+            </button>
+          </div>
+        </template>
+        <template v-else>
+          <h2>
+            {{
+              batchCancel
+                ? `取消所选的 ${cancellable.length} 个分享？`
+                : "取消这个分享？"
+            }}
+          </h2>
+          <p v-if="batchCancel">
+            取消后这些链接将无法访问，网盘文件会保留。
+          </p>
+          <p v-else-if="target">
+            {{ target.names.join("、")
+            }}<br />取消后原链接将无法访问，网盘文件会保留。
+          </p>
+          <div class="button-row">
+            <button class="secondary" :disabled="busy" @click="closeDialog">
+              返回</button
+            ><button class="danger" :disabled="busy" @click="confirm">
+              {{ busy ? "正在取消…" : "取消分享" }}
+            </button>
+          </div>
+        </template>
       </div>
     </div></Teleport
   >

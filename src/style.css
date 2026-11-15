@@ -319,7 +319,7 @@ p {
 /* One content column for every list page: rows kept compact on wide monitors. */
 .main-content:not(.drive-workspace) > * {
   width: 100%;
-  max-width: 820px;
+  max-width: 780px;
   margin-inline: auto;
 }
 .page-header {
@@ -901,6 +901,7 @@ button.directory:hover {
 .task-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 2px;
   color: var(--muted);
 }
@@ -2073,13 +2074,20 @@ button.directory:hover {
 .share-link-text a:focus-visible {
   border-bottom-color: currentColor;
 }
-/* Share and upload rows list plain facts, so nothing is pinned to the right. */
-.task-meta.share-meta span:last-child,
-.task-meta.upload-meta span:last-child {
+/* Share rows list plain facts, so nothing is pinned to the right. */
+.task-meta.share-meta span:last-child {
   margin-left: 0;
 }
 .task-meta.share-meta {
   margin-top: 6px;
+}
+/* Status sits in its own centred column so rows of different heights line up. */
+.share-state {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-shrink: 0;
+  width: 58px;
 }
 /* Dialogs share the same surface, spacing and form treatment. */
 .modal-backdrop {
