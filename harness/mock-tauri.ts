@@ -440,10 +440,24 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
   if (cmd === "drive_share") {
     const names =
       (args.files as { name: string }[] | undefined)?.map((f) => f.name) ?? [];
+    const provider = String(args.provider ?? "baidu");
+    const codeMode = String(args.codeMode ?? "auto");
+    const codes: Record<string, string> = {
+      baidu: "ab12",
+      quark: "cd34",
+      xunlei: "ef56",
+    };
+    // 自定义提取码只有百度认；自动生成时用固定的「服务端」提取码，无提取码时为空。
+    const password =
+      codeMode === "none"
+        ? ""
+        : codeMode === "custom"
+          ? String(args.password ?? "")
+          : (codes[provider] ?? "ab12");
     const share = {
-      id: `mock-${args.provider ?? "baidu"}-share-${state.shares.length + 1}`,
-      url: `https://${args.provider ?? "baidu"}.example.com/s/1mockShare`,
-      password: args.password ?? "abcd",
+      id: `mock-${provider}-share-${state.shares.length + 1}`,
+      url: `https://${provider}.example.com/s/1mockShare`,
+      password,
       period: args.period,
       createdAt: Math.floor(Date.now() / 1000),
       accountId: args.accountId,

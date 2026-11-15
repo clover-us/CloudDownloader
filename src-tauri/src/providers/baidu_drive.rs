@@ -286,16 +286,23 @@ impl Session {
         parse_file(&data)
     }
 
+    /// Share personal-drive entries. `code_mode` is `"custom"` when the caller
+    /// supplied a 4-character code, otherwise Baidu picks a random one.
     pub async fn drive_share(
         &self,
         account_id: &str,
         files: &[DriveFile],
         period: u32,
         password: &str,
+        code_mode: &str,
     ) -> Result<CreatedShare, String> {
+        if code_mode == "none" {
+            return Err("百度网盘分享必须带提取码，不能选择无提取码".into());
+        }
+        let custom = code_mode == "custom";
         if !matches!(period, 0 | 1 | 7 | 30)
-            || password.len() != 4
-            || !password.bytes().all(|b| b.is_ascii_alphanumeric())
+            || (custom
+                && (password.len() != 4 || !password.bytes().all(|b| b.is_ascii_alphanumeric())))
         {
             return Err("分享有效期请选择永久、1、7 或 30 天，提取码须为 4 位字母或数字".into());
         }
@@ -314,15 +321,18 @@ impl Session {
             .iter()
             .map(|f| f.id.parse::<u64>().map_err(|_| "文件 ID 无效"))
             .collect::<Result<Vec<_>, _>>()?;
+        let mut form = vec![
+            ("fid_list", json!(ids).to_string()),
+            ("schannel", "4".into()),
+            ("channel_list", "[]".into()),
+            ("period", period.to_string()),
+        ];
+        if custom {
+            form.push(("pwd", password.into()));
+        }
         let data = check(
-            self.json(self.drive_post("/share/set", &identity.token).form(&[
-                ("fid_list", json!(ids).to_string()),
-                ("schannel", "4".into()),
-                ("channel_list", "[]".into()),
-                ("period", period.to_string()),
-                ("pwd", password.into()),
-            ]))
-            .await?,
+            self.json(self.drive_post("/share/set", &identity.token).form(&form))
+                .await?,
         )?;
         let url = data["shorturl"]
             .as_str()
@@ -340,7 +350,11 @@ impl Session {
         Ok(CreatedShare {
             id,
             url,
-            password: password.into(),
+            password: if custom {
+                password.into()
+            } else {
+                text(&data["pwd"])
+            },
             period,
             created_at: now(),
             account_id: identity.account_id,

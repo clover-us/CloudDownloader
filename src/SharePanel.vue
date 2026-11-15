@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { Copy, Link, LoaderCircle, Share2, X } from "@lucide/vue";
 import {
   type CreatedShare,
@@ -46,6 +47,9 @@ async function copy(s: CreatedShare) {
   } catch {
     emit("error", "复制失败，请选中链接手动复制");
   }
+}
+function open(s: CreatedShare) {
+  void openUrl(s.url).catch(() => emit("error", "无法打开浏览器，请复制链接手动访问"));
 }
 async function copySelected() {
   if (!selected.value.length) return;
@@ -181,8 +185,14 @@ function askCancel(s: CreatedShare) {
         >
       </div>
       <div class="share-link-text">
-        <Link :size="15" /><span>{{ s.url }}</span
-        ><span>提取码：{{ s.password }}</span>
+        <Link :size="15" /><a
+          class="share-link"
+          :href="s.url"
+          :title="`在浏览器中打开 ${s.url}`"
+          @click.prevent="open(s)"
+          >{{ s.url }}</a
+        ><span v-if="s.password">提取码：{{ s.password }}</span
+        ><span v-else>无需提取码</span>
       </div>
       <div class="share-record-bottom">
         <span

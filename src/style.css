@@ -2044,6 +2044,16 @@ button.directory:hover {
   user-select: text;
   overflow-wrap: anywhere;
 }
+.share-link-text a {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  cursor: pointer;
+}
+.share-link-text a:hover,
+.share-link-text a:focus-visible {
+  border-bottom-color: currentColor;
+}
 .share-record-bottom {
   display: flex;
   align-items: center;
@@ -2133,6 +2143,16 @@ button.directory:hover {
   color: var(--muted);
   line-height: 1.8;
   overflow-wrap: anywhere;
+}
+.cloud-dialog label.share-code-toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+}
+.cloud-dialog label.share-code-toggle input {
+  width: auto;
+  margin: 0;
 }
 .dialog-actions {
   display: flex;

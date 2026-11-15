@@ -725,17 +725,24 @@ impl Session {
 
     /// Create a share link for the given personal-drive entries. Quark uses a
     /// three-step task flow (`share` -> poll `task` -> `share/password`).
+    ///
+    /// `code_mode` is `"auto"` for a private link whose passcode the server
+    /// generates, and `"none"` for a public link without one. Quark does not
+    /// accept caller-supplied passcodes.
     pub async fn cloud_share(
         &self,
         files: &[DriveFile],
         period: u32,
-        password: &str,
+        code_mode: &str,
     ) -> Result<CreatedShare, String> {
         if files.is_empty() {
             return Err("请选择要分享的文件".into());
         }
         if !matches!(self.provider, Provider::Quark) {
             return Err("该网盘暂不支持创建分享".into());
+        }
+        if !matches!(code_mode, "auto" | "none") {
+            return Err("夸克网盘的提取码由服务端生成，不支持自定义".into());
         }
         let account_id = self.cloud_identity().await?.0;
         let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
@@ -747,14 +754,11 @@ impl Session {
         let mut body = json!({
             "fid_list": files.iter().map(|f| f.id.clone()).collect::<Vec<_>>(),
             "title": title,
-            "url_type": if password.trim().is_empty() { 1 } else { 2 },
+            "url_type": if code_mode == "auto" { 2 } else { 1 },
             "expired_type": if period == 0 { 1 } else { 2 },
         });
         if period > 0 {
             body["expired_at"] = json!(now().saturating_add(period as u64 * 86400) * 1000);
-        }
-        if !password.trim().is_empty() {
-            body["passcode"] = json!(password);
         }
         let value = check(
             self.provider,

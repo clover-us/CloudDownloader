@@ -335,6 +335,43 @@ await page.evaluate(() => {
   window.__MOCK__.state.newDirLagMs = 0;
   window.__MOCK__.state.createdDirs.clear();
 });
+// 夸克、迅雷的提取码由服务端生成，界面只能选择要不要提取码。
+await page.locator(".drive-file-row input[type=checkbox]").first().check();
+await page.locator(".drive-file-head .batch-btn", { hasText: "分享" }).click();
+await page.waitForSelector(".cloud-dialog");
+check(
+  "D10d quark share lets the server pick the passcode",
+  (await page.locator(".cloud-dialog input[placeholder*='留空']").count()) === 0 &&
+    (await page.locator(".cloud-dialog label.share-code-toggle").count()) === 1,
+);
+await page.locator(".cloud-dialog .dialog-actions button.primary").click();
+await page.waitForFunction(
+  () => window.__MOCK__.lastCall("drive_share")?.args?.codeMode === "auto",
+);
+check(
+  "D10e share result shows the passcode the server generated",
+  (await page.locator(".cloud-dialog textarea").inputValue()).includes(
+    "提取码：cd34",
+  ),
+);
+await page
+  .locator(".cloud-dialog .icon-button[aria-label='关闭对话框']")
+  .click();
+await page.locator(".drive-file-head .batch-btn", { hasText: "分享" }).click();
+await page.locator(".cloud-dialog label.share-code-toggle input").uncheck();
+await page.locator(".cloud-dialog .dialog-actions button.primary").click();
+await page.waitForFunction(
+  () => window.__MOCK__.lastCall("drive_share")?.args?.codeMode === "none",
+);
+check(
+  "D10f share without a passcode omits the extraction code",
+  !(await page.locator(".cloud-dialog textarea").inputValue()).includes(
+    "提取码",
+  ),
+);
+await page
+  .locator(".cloud-dialog .icon-button[aria-label='关闭对话框']")
+  .click();
 await page.evaluate(() => {
   window.__MOCK__.state.idPaths = false;
 });
@@ -1114,6 +1151,14 @@ check(
   (await page.locator(".task-list-head .batch-count").count()) === 0 &&
     (await page.locator("article.share-record").first().innerText()).includes(
       "已取消",
+    ),
+);
+const shareLinks = page.locator("article.share-record a.share-link");
+check(
+  "S6 share link is a clickable link to the share page",
+  (await shareLinks.count()) === 2 &&
+    ((await shareLinks.first().getAttribute("href")) ?? "").startsWith(
+      "https://pan.baidu.com/s/",
     ),
 );
 

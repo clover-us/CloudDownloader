@@ -483,6 +483,7 @@ async fn permanent_share_check(app: &tauri::AppHandle) -> Result<Value, String> 
         vec![file.clone()],
         0,
         "cd26".into(),
+        "custom".into(),
     )
     .await?;
     std::fs::write(
@@ -937,6 +938,7 @@ async fn smoke(app: &tauri::AppHandle, resume: bool) -> Result<Value, String> {
         vec![remote],
         1,
         "cd26".into(),
+        "auto".into(),
     )
     .await?;
     // Persist the generated fixture share for cancellation even if the next check fails.

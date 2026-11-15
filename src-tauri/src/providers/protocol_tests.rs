@@ -1127,7 +1127,7 @@ async fn quark_share_creates_three_step_link() {
     )
     .await;
     let files = vec![fixture_file("q1", "/q1", "a.txt", false)];
-    let share = session.cloud_share(&files, 7, "abcd").await.unwrap();
+    let share = session.cloud_share(&files, 7, "auto").await.unwrap();
     assert_eq!(share.url, "https://pan.quark.cn/s/xyz");
     assert_eq!(share.password, "abcd");
     assert_eq!(share.id, "sid-1");
@@ -1140,8 +1140,40 @@ async fn quark_share_creates_three_step_link() {
     assert_eq!(body["fid_list"], json!(["q1"]));
     assert_eq!(body["url_type"], 2);
     assert_eq!(body["expired_type"], 2);
+    assert!(
+        body.get("passcode").is_none(),
+        "私密链接的提取码由服务端生成，调用方不应再传 passcode"
+    );
     assert!(requests[2].target.contains("/task"));
     assert!(requests[3].target.contains("/share/password"));
+}
+
+#[tokio::test]
+async fn quark_public_share_keeps_no_passcode_and_rejects_custom_one() {
+    let (session, server) = fixture(
+        Provider::Quark,
+        vec![
+            json!({"success":true,"data":{"uid":"quark-fixture"}}),
+            json!({"code":0,"data":{"task_id":"task-1"}}),
+            json!({"code":0,"data":{"status":2,"share_id":"sid-2"}}),
+            json!({"code":0,"data":{"share_url":"https://pan.quark.cn/s/open"}}),
+        ],
+    )
+    .await;
+    let files = vec![fixture_file("q1", "/q1", "a.txt", false)];
+    let share = session.cloud_share(&files, 0, "none").await.unwrap();
+    assert_eq!(share.url, "https://pan.quark.cn/s/open");
+    assert_eq!(share.password, "");
+    let requests = server.await.unwrap();
+    let body: Value = serde_json::from_str(&requests[1].body).unwrap();
+    assert_eq!(body["url_type"], 1);
+    assert_eq!(body["expired_type"], 1);
+    assert!(body.get("passcode").is_none());
+
+    let (session, server) = fixture(Provider::Quark, vec![]).await;
+    let err = session.cloud_share(&files, 7, "custom").await.unwrap_err();
+    assert!(err.contains("不支持自定义"));
+    assert!(server.await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -1200,7 +1232,10 @@ async fn xunlei_create_share_posts_share_request() {
     )
     .await;
     let files = vec![fixture_file("xl1", "/xl1", "a.txt", false)];
-    let share = session.xunlei_create_share(&files, 7, "").await.unwrap();
+    let share = session
+        .xunlei_create_share(&files, 7, "auto")
+        .await
+        .unwrap();
     assert_eq!(share.url, "https://pan.xunlei.com/s/xyz");
     assert_eq!(share.password, "wxyz");
     assert_eq!(share.id, "sid-1");
@@ -1212,6 +1247,7 @@ async fn xunlei_create_share_posts_share_request() {
     assert_eq!(body["expiration_days"], "7");
     assert_eq!(body["file_ids"], json!(["xl1"]));
     assert_eq!(body["share_to"], "copy");
+    assert_eq!(body["params"]["withPassCodeInLink"], "true");
 }
 
 #[tokio::test]

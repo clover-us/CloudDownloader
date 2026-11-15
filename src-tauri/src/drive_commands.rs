@@ -388,27 +388,34 @@ pub async fn drive_share(
     files: Vec<DriveFile>,
     period: u32,
     password: String,
+    code_mode: String,
 ) -> Result<CreatedShare, String> {
     trusted(&window)?;
+    // `custom` = caller supplied a 4-character code, `auto` = let the provider
+    // generate one, `none` = public link without a passcode.
+    let code_mode = match code_mode.as_str() {
+        "custom" | "auto" | "none" => code_mode.as_str(),
+        _ => "auto",
+    };
     let session = session::connect(&app, provider).await?;
     let share = match provider {
         Provider::Baidu => {
             session
-                .drive_share(&account_id, &files, period, &password)
+                .drive_share(&account_id, &files, period, &password, code_mode)
                 .await?
         }
         Provider::Quark => {
             if session.cloud_identity().await?.0 != account_id {
                 return Err("网盘账号已切换，请重新选择文件".into());
             }
-            session.cloud_share(&files, period, &password).await?
+            session.cloud_share(&files, period, code_mode).await?
         }
         Provider::Xunlei => {
             if session.cloud_identity().await?.0 != account_id {
                 return Err("网盘账号已切换，请重新选择文件".into());
             }
             session
-                .xunlei_create_share(&files, period, &password)
+                .xunlei_create_share(&files, period, code_mode)
                 .await?
         }
         _ => return Err("该网盘暂不支持创建分享".into()),

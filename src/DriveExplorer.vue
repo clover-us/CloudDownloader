@@ -159,6 +159,8 @@ const concurrency = ref(4);
 const folderName = ref("");
 const period = ref(7);
 const password = ref("");
+// 夸克、迅雷的提取码由服务端生成，只能选择「要 / 不要提取码」。
+const shareUseCode = ref(true);
 const created = ref<CreatedShare | null>(null);
 const shareTargets = ref<DriveFile[]>([]);
 const renameTarget = ref<DriveFile | null>(null);
@@ -173,6 +175,16 @@ let disposed = false;
 let revision = 0;
 
 const isBaidu = computed(() => props.provider === "baidu");
+// 百度可以自己定 4 位提取码，留空则由百度随机生成；夸克、迅雷只能选要不要提取码。
+const shareCodeMode = computed(() =>
+  isBaidu.value
+    ? password.value.trim()
+      ? "custom"
+      : "auto"
+    : shareUseCode.value
+      ? "auto"
+      : "none",
+);
 const canUpload = computed(() => canDrive(props.provider, "upload"));
 const canMkdir = computed(() => canDrive(props.provider, "mkdir"));
 const canShare = computed(() => canDrive(props.provider, "share"));
@@ -1047,6 +1059,7 @@ function prepareShare(files?: DriveFile[]) {
     random,
     (byte) => alphabet[byte % alphabet.length],
   ).join("");
+  shareUseCode.value = true;
   created.value = null;
   modalError.value = "";
   mode.value = "share";
@@ -1089,6 +1102,7 @@ async function submit() {
         files: shareFiles.value,
         period: period.value,
         password: password.value,
+        codeMode: shareCodeMode.value,
       });
       emit("changed");
     } else if (mode.value === "mkdir") {
@@ -1794,15 +1808,23 @@ onMounted(async () => {
               <option :value="30">30 天</option>
               <option :value="0">永久有效</option>
             </select></label
-          ><label
+          ><label v-if="isBaidu"
             >提取码<input
               v-model="password"
               maxlength="4"
               minlength="4"
               pattern="[a-zA-Z0-9]{4}"
-              required
+              placeholder="4 位字母或数字，留空由百度随机生成"
           /></label>
+          <label v-else class="share-code-toggle"
+            ><input v-model="shareUseCode" type="checkbox" />使用提取码</label
+          >
           <p class="dialog-note">
+            <template v-if="isBaidu"
+              >提取码可自定义 4 位字母或数字，留空则由百度随机生成。</template
+            ><template v-else
+              >提取码由{{ providerName(provider) }}自动生成，创建后会显示在下方；不需要提取码时取消勾选。</template
+            >
             持有链接和提取码的人可以访问所选内容。创建后可在「分享记录」中取消分享。
           </p></template
         >

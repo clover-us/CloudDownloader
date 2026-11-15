@@ -50,7 +50,7 @@ export const formatBytes = (n: number) => {
 export const formatDate = (n: number) =>
   n ? new Date(n * 1000).toLocaleString("zh-CN", { hour12: false }) : "—";
 export const shareText = (s: CreatedShare) =>
-  `链接：${s.url}\n提取码：${s.password}`;
+  s.password ? `链接：${s.url}\n提取码：${s.password}` : `链接：${s.url}`;
 export const formatSharePeriod = (period: number) =>
   period === 0 ? "永久有效" : `${period} 天有效`;
 export const isShareExpired = (s: CreatedShare, now = Date.now()) =>

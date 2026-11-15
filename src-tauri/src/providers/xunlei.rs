@@ -640,14 +640,21 @@ impl Session {
     }
 
     /// Create a share link for personal-drive entries (OpenList thunder `POST /share`).
+    ///
+    /// `code_mode` is `"auto"` when the share should carry a server-generated
+    /// passcode, and `"none"` for a link without one. Xunlei does not accept
+    /// caller-supplied passcodes.
     pub async fn xunlei_create_share(
         &self,
         files: &[DriveFile],
         period: u32,
-        _password: &str,
+        code_mode: &str,
     ) -> Result<CreatedShare, String> {
         if files.is_empty() {
             return Err("请选择要分享的文件".into());
+        }
+        if !matches!(code_mode, "auto" | "none") {
+            return Err("迅雷网盘的提取码由服务端生成，不支持自定义".into());
         }
         let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
         let title = if names.len() == 1 {
@@ -658,7 +665,7 @@ impl Session {
         let body = json!({
             "expiration_days": if period == 0 { "-1".to_string() } else { period.to_string() },
             "file_ids": files.iter().map(|f| f.id.clone()).collect::<Vec<_>>(),
-            "params": { "subscribe_push": "false", "withPassCodeInLink": "true" },
+            "params": { "subscribe_push": "false", "withPassCodeInLink": if code_mode == "auto" { "true" } else { "false" } },
             "restore_limit": "-1",
             "share_to": "copy",
             "title": title,
