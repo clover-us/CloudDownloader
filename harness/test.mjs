@@ -1243,13 +1243,24 @@ check(
   "S5d the new link replaces the stopped row",
   (await page.locator("article.share-record .status-pill.complete").count()) ===
     1,
-);const shareLinks = page.locator("article.share-record a.share-link");
+);
+const shareLinks = page.locator("article.share-record a.share-link");
 check(
   "S6 share link is a clickable link to the share page",
   (await shareLinks.count()) === 2 &&
     ((await shareLinks.first().getAttribute("href")) ?? "").startsWith(
       "https://pan.quark.cn/s/",
     ),
+);
+const liveHref = await page
+  .locator('article.share-record:has-text("电影合集.zip") a.share-link')
+  .first()
+  .getAttribute("href");
+check(
+  "S6b the passcode rides along in the link",
+  String(liveHref).startsWith("https://pan.quark.cn/s/") &&
+    String(liveHref).endsWith("?pwd=aaaa"),
+  String(liveHref),
 );
 await page
   .locator(".drive-providers button", { hasText: "迅雷网盘" })

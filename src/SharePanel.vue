@@ -17,6 +17,7 @@ import {
   formatDate,
   formatSharePeriod,
   isShareExpired as expired,
+  shareLink,
   shareText,
 } from "./cloud";
 const props = defineProps<{
@@ -378,10 +379,10 @@ onMounted(() => void sync(true));
         <div class="share-link-text">
           <Link :size="14" /><a
             class="share-link"
-            :href="s.url"
-            :title="`在浏览器中打开 ${s.url}`"
+            :href="shareLink(s)"
+            :title="`在浏览器中打开 ${shareLink(s)}`"
             @click.prevent="open(s)"
-            >{{ s.url }}</a
+            >{{ shareLink(s) }}</a
           >
         </div>
         <div class="task-meta share-meta">

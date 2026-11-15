@@ -2074,10 +2074,6 @@ button.directory:hover {
   border-bottom: 1px solid transparent;
   cursor: pointer;
 }
-.share-link-text .share-code {
-  flex-shrink: 0;
-  white-space: nowrap;
-}
 .share-link-text svg {
   flex-shrink: 0;
 }

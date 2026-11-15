@@ -605,20 +605,26 @@ pub async fn drive_share_sync(
         Provider::Xunlei => session.xunlei_share_list().await?,
         _ => return Err("该网盘暂不支持拉取分享记录".into()),
     };
-    // Records saved before the provider field existed are guessed from the
-    // account that is currently signed in; resolve it before taking the lock.
+    // Records saved before the provider field existed are guessed from the link
+    // host first, then from the account that is currently signed in; resolve it
+    // before taking the lock.
     let account_id = match provider {
         Provider::Baidu => session.baidu_identity(None).await?.account_id,
         _ => session.cloud_identity().await?.0,
     };
     let store = state.store.lock().unwrap();
     let local = store.shares()?;
+    // Backfill every legacy row, not just this provider's: opening the 夸克 tab
+    // must not leave 迅雷 links showing there.
     for saved in &local {
-        if saved.provider.is_empty()
-            && (saved.account_id == account_id || share_provider(saved) == Some(provider))
-        {
+        if !saved.provider.is_empty() {
+            continue;
+        }
+        let guess =
+            share_provider(saved).or_else(|| (saved.account_id == account_id).then_some(provider));
+        if let Some(guessed) = guess {
             let mut backfilled = saved.clone();
-            backfilled.provider = provider.key().into();
+            backfilled.provider = guessed.key().into();
             store.save_share(&backfilled)?;
         }
     }

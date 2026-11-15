@@ -57,8 +57,16 @@ export const formatBytes = (n: number) => {
 };
 export const formatDate = (n: number) =>
   n ? new Date(n * 1000).toLocaleString("zh-CN", { hour12: false }) : "—";
+/** Link with the passcode attached, so opening it does not ask for the code. */
+export const shareLink = (s: CreatedShare) => {
+  if (!s.password) return s.url;
+  const separator = s.url.includes("?") ? "&" : "?";
+  return `${s.url}${separator}pwd=${encodeURIComponent(s.password)}`;
+};
 export const shareText = (s: CreatedShare) =>
-  s.password ? `链接：${s.url}\n提取码：${s.password}` : `链接：${s.url}`;
+  s.password
+    ? `链接：${shareLink(s)}\n提取码：${s.password}`
+    : `链接：${s.url}`;
 export const formatSharePeriod = (period: number) =>
   period === 0 ? "永久有效" : `${period} 天有效`;
 export const isShareExpired = (s: CreatedShare, now = Date.now()) =>
