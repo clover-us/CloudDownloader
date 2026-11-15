@@ -122,10 +122,34 @@ fn find_binary() -> Result<PathBuf, String> {
                 .join("binaries/aria2c-x86_64-pc-windows-msvc.exe"),
         );
     }
-    candidates
+    let bundled = candidates
         .into_iter()
         .find(|p| p.is_file())
-        .ok_or("缺少下载引擎 aria2c.exe，请重新安装完整程序".into())
+        .ok_or("缺少下载引擎 aria2c.exe，请重新安装完整程序")?;
+    // Run the engine from a copy outside the install directory. An installed
+    // update replaces bin\aria2c.exe, and a running engine would keep that file
+    // locked, which is exactly the "cannot open file for writing" failure.
+    if cfg!(debug_assertions) {
+        return Ok(bundled);
+    }
+    Ok(engine_copy(&bundled).unwrap_or(bundled))
+}
+
+/// Copies the bundled engine to local app data, refreshing it when the shipped
+/// build changes, and returns the path to run.
+fn engine_copy(bundled: &Path) -> Result<PathBuf, String> {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .ok_or("找不到本地应用数据目录")?;
+    let directory = base.join("CloudDownloader").join("engine");
+    std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+    let target = directory.join("aria2c.exe");
+    let current = std::fs::metadata(&target).ok().map(|meta| meta.len());
+    let shipped = std::fs::metadata(bundled).map_err(|e| e.to_string())?.len();
+    if current != Some(shipped) {
+        std::fs::copy(bundled, &target).map_err(|e| e.to_string())?;
+    }
+    Ok(target)
 }
 
 impl Rpc {
