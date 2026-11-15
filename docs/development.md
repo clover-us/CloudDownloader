@@ -58,6 +58,7 @@ powershell -ExecutionPolicy Bypass -File scripts/updater-key.ps1
 注意事项：
 
 - 安装包在打包时会被重新编译以修正版本资源，字节与 Tauri 的原始产物不同，所以签名必须针对最终文件：`package.ps1` 已自动完成这一步，手工发布时不要改用 `src-tauri/target/release/bundle/nsis/` 里的中间产物。
+- 便携包压缩后会回读包内的 `README.md` 与 `VERIFICATION.md`，要求与项目根文件逐字节一致，否则中止；0.7.9 首次发布时就曾打进过期的验证记录，只能重发一次。
 - 自动更新只对 0.6.0 及之后的 **安装版** 生效；便携版和开发模式（`tauri dev`）不会自我替换。
 - 私钥或密码丢失后无法再发布可被旧版本接受的更新，只能让用户手动安装新包并重新分发公钥。
 - 换用新密钥时，需要同时更新 `tauri.conf.json` 的 `pubkey` 并在 Release 中重新签名安装包。

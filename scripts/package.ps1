@@ -139,6 +139,32 @@ VIAddVersionKey /LANG=1033 "OriginalFilename" "__INSTALLER_FILENAME__"
     $zipPath = Join-Path $packageRoot "CloudDownloader-$appVersion-win-x64.zip"
     $portable = @('CloudDownloader.exe', 'bin', 'extension', 'README.md', 'VERIFICATION.md') | ForEach-Object { Join-Path $packageRoot $_ }
     Compress-Archive -LiteralPath $portable -DestinationPath $zipPath -Force
+    # 便携包里的文档必须与项目根的最新文件逐字节一致：0.7.9 首次发布时打进了过期的
+    # VERIFICATION.md，只能重发一次；这里回读 zip，避免复制或压缩环节再悄悄带上旧内容。
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::OpenRead($zipPath)
+    try {
+        foreach ($name in 'README.md', 'VERIFICATION.md') {
+            $entry = $archive.GetEntry($name)
+            if (-not $entry) { throw "便携包缺少 $name" }
+            $stream = $entry.Open()
+            try {
+                $memory = New-Object IO.MemoryStream
+                $stream.CopyTo($memory)
+            } finally { $stream.Dispose() }
+            $packed = $memory.ToArray()
+            $memory.Dispose()
+            $sourceBytes = [IO.File]::ReadAllBytes((Join-Path $projectRoot $name))
+            if ($packed.Length -ne $sourceBytes.Length -or
+                [Convert]::ToBase64String($packed) -ne [Convert]::ToBase64String($sourceBytes)) {
+                throw "便携包内的 $name 与项目根文件不一致"
+            }
+        }
+    } finally { $archive.Dispose() }
+    $verification = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes((Join-Path $projectRoot 'VERIFICATION.md')))
+    if (-not $verification.Contains("当前验证对象为 $appVersion")) {
+        throw "VERIFICATION.md 没有标注当前验证对象为 $appVersion"
+    }
     $checksums = @($installerPath, $zipPath) | ForEach-Object {
         (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + [IO.Path]::GetFileName($_)
     }

@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1",
     "test:ui": "node harness/test.mjs",
+    "check:docs": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-release-docs.ps1",
     "format": "prettier --write src index.html package.json src-tauri/tauri.conf.json",
     "tauri": "tauri"
   },
