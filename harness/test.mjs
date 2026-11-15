@@ -851,34 +851,36 @@ check(
   (await page.locator(".handoff-dialog").innerText()).includes("report.pdf"),
 );
 await page.locator(".handoff-dialog footer .primary").click();
-await page.waitForFunction(
-  () =>
-    document.querySelector(".unified-download textarea")?.value ===
-    "https://example.com/files/report.pdf",
+await page.waitForFunction(() =>
+  window.__MOCK__.state.calls.some(
+    (call) =>
+      call.cmd === "enqueue_direct" &&
+      String(call.args?.url ?? "").includes("report.pdf"),
+  ),
 );
 check(
-  "M2 handoff fills the download box",
-  (await page.locator(".unified-download textarea").inputValue()) ===
-    "https://example.com/files/report.pdf",
+  "M2 confirmed hand-off starts downloading right away",
+  await page.evaluate(() =>
+    window.__MOCK__.state.calls.some(
+      (call) =>
+        call.cmd === "enqueue_direct" &&
+        String(call.args?.url ?? "").includes("report.pdf"),
+    ),
+  ),
+);
+check(
+  "M2b hand-off dialog closes after confirming",
+  (await page.locator(".handoff-dialog").count()) === 0,
 );
 await page.waitForFunction(() =>
   window.__MOCK__.state.calls.some((c) => c.cmd === "inspect_download"),
-);
-await page.waitForFunction(() =>
-  document
-    .querySelector(".unified-type")
-    ?.textContent?.includes("普通文件链接"),
-);
-check(
-  "M2b handoff parses the link",
-  (await page.locator(".unified-type").innerText()).includes("普通文件链接"),
 );
 check(
   "M3 handoff queue is drained once",
   (await page.evaluate(() => window.__MOCK__.state.handoffs.length)) === 0,
 );
 
-// --- M4–M6. Extension hand-off (bridge): browser headers reach the engine ---
+// --- M4–M8. Extension hand-off (bridge): browser headers reach the engine ---
 const handed = {
   url: "https://example.com/files/signed-video.mp4",
   filename: "video.mp4",
@@ -889,21 +891,13 @@ const handed = {
   ],
 };
 await mock("handoff", handed);
+await page.waitForSelector(".handoff-dialog");
+await page.locator(".handoff-dialog footer .primary").click();
 await page.waitForFunction(
   () =>
-    document.querySelector(".unified-download textarea")?.value ===
-    "https://example.com/files/signed-video.mp4",
+    window.__MOCK__.state.calls.filter((call) => call.cmd === "enqueue_direct")
+      .length >= 2,
 );
-check(
-  "M4 handoff keeps the browser filename",
-  (await page.locator(".unified-filename input").inputValue()) === "video.mp4",
-);
-await page.waitForFunction(() =>
-  document
-    .querySelector(".unified-download")
-    ?.textContent?.includes("已带上浏览器的登录信息"),
-);
-check("M5 handoff says it carries the browser login", true);
 const inspectArgs = await page.evaluate(
   () =>
     window.__MOCK__.state.calls
@@ -915,16 +909,15 @@ check(
   JSON.stringify(inspectArgs?.headers) === JSON.stringify(handed.headers),
   JSON.stringify(inspectArgs),
 );
-await page
-  .locator(".unified-download .selection-footer button.primary")
-  .click();
-await page.waitForFunction(() =>
-  window.__MOCK__.state.calls.some((c) => c.cmd === "enqueue_direct"),
-);
 const enqueueArgs = await page.evaluate(
   () =>
     window.__MOCK__.state.calls.filter((c) => c.cmd === "enqueue_direct").at(-1)
       ?.args,
+);
+check(
+  "M4 handoff keeps the browser filename",
+  enqueueArgs?.filename === "video.mp4",
+  JSON.stringify(enqueueArgs),
 );
 check(
   "M7 handoff passes the headers on to aria2",

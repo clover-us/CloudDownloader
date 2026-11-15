@@ -172,7 +172,7 @@ onBeforeUnmount(cancel);
  * 浏览器交过来的链接：填进输入框并立即识别。
  * 先等输入框 watcher 跑完，否则它会在识别结果返回后清掉 result 与 handoff。
  */
-async function receive(value: string | Handoff) {
+async function receive(value: string | Handoff, start = false) {
   const item: Handoff = typeof value === "string" ? { url: value } : value;
   const link = item.url.trim();
   if (!link) return;
@@ -182,6 +182,13 @@ async function receive(value: string | Handoff) {
   handoff.value = item;
   input.value?.focus();
   await inspect();
+  // 浏览器接力确认后直接开工，不在下载框里停留等用户再点一次。
+  // 识别可能被输入框的 watcher 再触发一次，等结果落定再开始。
+  if (start) {
+    for (let i = 0; i < 60 && !result.value && !error.value; i += 1)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    if (result.value) await download();
+  }
 }
 
 async function accept(value: Inspection, request: number) {

@@ -736,7 +736,8 @@ async function takeHandoff() {
   if (!link) return;
   tab.value = "all";
   await nextTick();
-  await downloadBox.value?.receive(link);
+  // 确认即入队开始下载，不再停在下载框里等第二次点击。
+  await downloadBox.value?.receive(link, true);
 }
 
 async function browseHandoff() {
