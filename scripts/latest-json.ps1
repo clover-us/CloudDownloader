@@ -15,7 +15,10 @@ $version = $conf.version
 if (-not $Notes) {
     $releaseNotes = Join-Path $projectRoot "docs/release-$version.md"
     if (Test-Path $releaseNotes) {
-        $body = Get-Content $releaseNotes -Encoding UTF8 | Where-Object { $_ -notmatch '^#\s' }
+        # Read the bytes ourselves: Get-Content's encoding handling mangles
+        # non-ASCII release notes on machines whose ANSI code page is not UTF-8.
+        $text = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($releaseNotes))
+        $body = @($text -split "\r?\n" | Where-Object { $_ -notmatch '^#\s' })
         $firstSection = @()
         foreach ($line in $body) {
             if ($line -match '^##\s') { break }
