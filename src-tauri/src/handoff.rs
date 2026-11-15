@@ -109,8 +109,17 @@ pub fn parse(input: &str) -> Option<Handoff> {
     let link = url::form_urlencoded::parse(query.as_bytes())
         .find(|(key, _)| key == "url")
         .map(|(_, value)| value.into_owned())?;
+    let link = checked_link(&link)?;
+    if !is_magnet(&link) {
+        // A protocol URL can be opened by any local program; keep it from
+        // pointing the engine at this machine or the intranet.
+        let target = url::Url::parse(&link).ok()?;
+        if crate::direct::is_local_target(&target) {
+            return None;
+        }
+    }
     Some(Handoff {
-        url: checked_link(&link)?,
+        url: link,
         filename: None,
         headers: Vec::new(),
     })
@@ -129,6 +138,14 @@ pub fn browser(
     agent: Option<&str>,
 ) -> Result<Handoff, String> {
     let url = checked_link(url).ok_or("只接受 HTTP/HTTPS 直链或磁力链接")?;
+    if !is_magnet(&url) {
+        // Anything that can POST to the bridge would otherwise be able to walk
+        // the intranet with the browser's cookies attached.
+        let target = url::Url::parse(&url).map_err(|_| "下载链接格式无效")?;
+        if crate::direct::is_local_target(&target) {
+            return Err("浏览器接力不支持本机或内网地址，请改用「用浏览器下载」".into());
+        }
+    }
     let mut headers = Vec::new();
     if !is_magnet(&url) {
         for (name, value) in [

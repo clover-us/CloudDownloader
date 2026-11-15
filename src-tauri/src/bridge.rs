@@ -12,7 +12,7 @@ use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     sync::{
-        atomic::{AtomicBool, AtomicU16, Ordering},
+        atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering},
         Mutex,
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -23,6 +23,12 @@ use std::{
 pub const DEFAULT_PORT: u16 = 17890;
 const MAX_HEAD: usize = 8 * 1024;
 const MAX_BODY: usize = 64 * 1024;
+/// Concurrent connections. A hand-off is rare and short; the cap keeps a local
+/// process from exhausting threads. `thread::spawn` panics when it cannot create
+/// one, and the release profile aborts on panic, so the cap is load-bearing.
+const MAX_CONNECTIONS: usize = 16;
+/// Slots currently handed to connection threads.
+static ACTIVE: AtomicUsize = AtomicUsize::new(0);
 
 /// The port the socket should be on. The listener rebinds when it changes.
 static PORT: AtomicU16 = AtomicU16::new(DEFAULT_PORT);
@@ -145,6 +151,50 @@ pub fn start(app: tauri::AppHandle) {
     std::thread::spawn(move || serve(app));
 }
 
+/// Reserves one of [`MAX_CONNECTIONS`] slots for a connection thread; the slot
+/// is released when the guard drops, including on an early return.
+struct Slot;
+
+impl Slot {
+    fn acquire() -> Option<Self> {
+        let mut current = ACTIVE.load(Ordering::Relaxed);
+        loop {
+            if current >= MAX_CONNECTIONS {
+                return None;
+            }
+            match ACTIVE.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return Some(Self),
+                Err(value) => current = value,
+            }
+        }
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        ACTIVE.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Turns a connection away without starting a thread. Reached only when
+/// something is flooding the port.
+fn refuse(mut stream: TcpStream) {
+    let body = "{\"error\":\"浏览器接力连接过多，请稍后再试\"}";
+    let head = format!(
+        "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    let _ = stream.set_nonblocking(false);
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.write_all(head.as_bytes());
+    let _ = stream.write_all(body.as_bytes());
+}
+
 fn serve(app: tauri::AppHandle) {
     let mut bound: Option<(u16, TcpListener)> = None;
     loop {
@@ -165,12 +215,16 @@ fn serve(app: tauri::AppHandle) {
         }
         match bound.as_ref() {
             Some((_, listener)) => match listener.accept() {
-                Ok((stream, _)) => {
-                    let app = app.clone();
-                    std::thread::spawn(move || {
-                        let _ = answer(stream, &app);
-                    });
-                }
+                Ok((stream, _)) => match Slot::acquire() {
+                    Some(slot) => {
+                        let app = app.clone();
+                        std::thread::spawn(move || {
+                            let _slot = slot;
+                            let _ = answer(stream, &app);
+                        });
+                    }
+                    None => refuse(stream),
+                },
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     std::thread::sleep(Duration::from_millis(100));
                 }
@@ -192,6 +246,23 @@ fn answer(mut stream: TcpStream, app: &tauri::AppHandle) -> std::io::Result<()> 
         Err((status, message)) => return reply(&mut stream, status, None, &message),
     };
     let origin = extension_origin(header_value(&head, "origin").as_deref());
+    // An origin with the right shape only proves that *some* extension is
+    // calling. Require the id the packaged extension installs under, otherwise
+    // any local program (or any other extension) could drive downloads through
+    // the bridge, including with its own cookie and referer headers.
+    if let Some(found) = &origin {
+        if !extension_matches(app, found) {
+            if request_line(&head).is_some_and(|(_, target)| target == "/add") {
+                record(String::new(), false, "扩展身份不匹配".into());
+            }
+            return reply(
+                &mut stream,
+                403,
+                None,
+                "扩展身份不匹配，请在应用设置里重新安装扩展",
+            );
+        }
+    }
     // Chrome's extension updater fetches these two without an Origin header, so
     // they live before the extension check: they only hand out the packaged
     // files, and the policy entry that points here is what authorises the
@@ -201,8 +272,8 @@ fn answer(mut stream: TcpStream, app: &tauri::AppHandle) -> std::io::Result<()> 
             return serve_extension(&mut stream, app, &target);
         }
     }
-    // Any request from a real extension origin proves it is installed and
-    // talking to us; heartbeats also carry the version for the title bar.
+    // A request from the installed extension proves it is talking to us;
+    // heartbeats also carry the version for the title bar.
     if origin.is_some() {
         mark_seen(extension_version(&body).as_deref());
     }
@@ -438,6 +509,17 @@ fn extension_origin(origin: Option<&str>) -> Option<String> {
     }
 }
 
+/// Whether the origin is the extension this build ships. Without a packaged
+/// extension there is no id to compare against, so the bridge refuses `/add`
+/// rather than trusting the origin shape.
+fn extension_matches(app: &tauri::AppHandle, origin: &str) -> bool {
+    let Some(id) = crate::extension_dir(app).and_then(|directory| crate::extension_id(&directory))
+    else {
+        return false;
+    };
+    origin == format!("chrome-extension://{id}")
+}
+
 fn request_line(head: &str) -> Option<(String, String)> {
     let mut parts = head.lines().next()?.split_whitespace();
     let method = parts.next()?.to_string();
@@ -463,6 +545,8 @@ fn read_request(stream: &mut TcpStream) -> Result<(String, Vec<u8>), (u16, Strin
         if let Some(end) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
             break end;
         }
+        // Checked before reading so a single read cannot grow the head past the
+        // limit unnoticed; the loop re-checks after every read too.
         if buffer.len() > MAX_HEAD {
             return Err((431, "请求头过大".into()));
         }
@@ -490,7 +574,11 @@ fn read_request(stream: &mut TcpStream) -> Result<(String, Vec<u8>), (u16, Strin
             return Err((413, "请求体过大".into()));
         }
     }
-    body.truncate(length.min(MAX_BODY));
+    // Never silently shorten a body: a truncated JSON document would fail later
+    // with a confusing parse error instead of the refusal that applies.
+    if body.len() > length.min(MAX_BODY) {
+        return Err((413, "请求体过大".into()));
+    }
     Ok((head, body))
 }
 
@@ -570,6 +658,16 @@ mod tests {
             "POST /add HTTP/1.1\r\nHost: 127.0.0.1:17890\r\nOrigin: {ORIGIN}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
             body.len()
         )
+    }
+
+    #[test]
+    fn connection_slots_are_bounded() {
+        let slots: Vec<Slot> = (0..MAX_CONNECTIONS)
+            .map(|_| Slot::acquire().expect("slot"))
+            .collect();
+        assert!(Slot::acquire().is_none());
+        drop(slots);
+        assert!(Slot::acquire().is_some());
     }
 
     #[test]

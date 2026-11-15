@@ -29,6 +29,68 @@ pub fn validate_url(input: &str) -> Result<url::Url, String> {
     Ok(url)
 }
 
+/// Whether a link points back at this machine or the local network.
+///
+/// The browser bridge and the `clouddownloader://` handler can be reached by any
+/// local program, so a link arriving through them must not turn the engine into
+/// a probe for intranet services (a request that carries the browser's cookies).
+/// Links typed into the download box are not restricted: fetching from a NAS is
+/// a legitimate use.
+///
+/// Only literal addresses and well-known local names are caught here; a public
+/// hostname that resolves to a private address (DNS rebinding) still gets
+/// through, because the check runs before the name is resolved.
+pub fn is_local_target(url: &url::Url) -> bool {
+    match url.host() {
+        None => true,
+        Some(url::Host::Ipv4(ip)) => is_private_v4(ip),
+        Some(url::Host::Ipv6(ip)) => is_local_v6(ip),
+        Some(url::Host::Domain(name)) => {
+            let name = name.trim_end_matches('.').to_ascii_lowercase();
+            // Single-label names (`nas`, `router`) resolve through local DNS.
+            !name.contains('.')
+                || name == "localhost"
+                || [
+                    ".localhost",
+                    ".local",
+                    ".localdomain",
+                    ".internal",
+                    ".lan",
+                    ".home.arpa",
+                ]
+                .iter()
+                .any(|suffix| name.ends_with(suffix))
+        }
+    }
+}
+
+fn is_private_v4(ip: std::net::Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    ip.is_loopback()
+        || ip.is_private()
+        || ip.is_link_local()
+        || ip.is_unspecified()
+        || ip.is_broadcast()
+        || ip.is_documentation()
+        || ip.is_multicast()
+        || octets[0] == 0
+        // 100.64.0.0/10, carrier-grade NAT.
+        || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+}
+
+fn is_local_v6(ip: std::net::Ipv6Addr) -> bool {
+    if let Some(mapped) = ip.to_ipv4_mapped() {
+        return is_private_v4(mapped);
+    }
+    let segments = ip.segments();
+    ip.is_loopback()
+        || ip.is_unspecified()
+        || ip.is_multicast()
+        // fc00::/7 unique local, fe80::/10 link local.
+        || (segments[0] & 0xfe00) == 0xfc00
+        || (segments[0] & 0xffc0) == 0xfe80
+}
+
 /// Request headers a browser may hand over with a link. Anything else belongs
 /// to the provider adapters, which build their own headers.
 const HEADER_NAMES: [&str; 3] = ["Cookie", "Referer", "User-Agent"];
