@@ -974,9 +974,10 @@ button.directory:hover {
   color: var(--warning);
   background: var(--warning-soft);
 }
+/* Batch rows keep the same surface as single-file rows; the folder icon and
+   the "文件夹 · N 个文件" line are what tell them apart. */
 .task-group-row {
   position: relative;
-  background: color-mix(in srgb, var(--accent) 3%, transparent);
 }
 .task-group-row .task-expand {
   position: absolute;
@@ -988,7 +989,6 @@ button.directory:hover {
 }
 .task-child-row {
   padding-left: 44px;
-  background: color-mix(in srgb, var(--surface-soft) 45%, transparent);
 }
 .task-child-row .task-file-icon {
   width: 34px;
