@@ -27,12 +27,12 @@
 
 ## 下载
 
-最新版本 **0.7.7**：浏览器接力改为先弹确认窗——看清文件名、缩略链接与来源站点，确认后立刻开始下载，15 秒无操作默认交给应用；选「用浏览器下载」不再被扩展反复接管。扩展升级到 0.2.1，升级后需在扩展页重新加载一次。
+最新版本 **0.7.8**：设置页「开源仓库」链接与按钮改为指向本项目仓库 clover-us/CloudDownloader，点击直达项目主页；README 界面预览图更新至当前版本。浏览器接力确认窗、九个网盘与 BT 下载等能力保持不变。
 
 | Windows 安装版 · 推荐                 | 便携版                                 |
 | :------------------------------------ | :------------------------------------- |
 | 自动创建快捷方式，适合日常使用。      | 解压即可运行，保留完整目录结构。       |
-| **[↓ 下载 v0.7.7 安装包][installer]** | **[↓ 下载 v0.7.7 便携 ZIP][portable]** |
+| **[↓ 下载 v0.7.8 安装包][installer]** | **[↓ 下载 v0.7.8 便携 ZIP][portable]** |
 
 [全部版本与更新说明][releases] · [SHA-256 校验文件][checksums]
 
@@ -140,15 +140,18 @@ npm run tauri dev -- --no-watch
 
 ## 文档与致谢
 
-[使用指南](docs/usage.md) · [开发文档](docs/development.md) · [验证记录](VERIFICATION.md) · [更新说明](docs/release-0.7.7.md) · [第三方许可](third-party/notices/)
+[使用指南](docs/usage.md) · [开发文档](docs/development.md) · [验证记录](VERIFICATION.md) · [更新说明](docs/release-0.7.8.md) · [第三方许可](third-party/notices/)
 
-界面布局与蓝白配色参考 [Motrix](https://github.com/agalwood/Motrix)，保留本项目的统一下载入口与多网盘工作区。
+**上游项目**
 
-网盘协议流程参考 [CYQawa/YunX](https://github.com/CYQawa/YunX) 与 [YunX-Desktop](https://github.com/tidain/YunX-Desktop)，以 Rust 实现适配器。参考版本和许可出处见[协议资料](third-party/notices/cloud-protocol-sources.txt)。
+- [sclliang/CloudDownloader](https://github.com/sclliang/CloudDownloader)：本项目的上游原仓库，网盘适配与下载调度在此基础上继续开发，现由本仓库维护并发布。
 
-<p align="center"><sub>sixunited · 作者 <a href="https://github.com/sclliang">sclliang</a></sub></p>
+**参考项目**
 
-[installer]: https://github.com/clover-us/CloudDownloader/releases/download/v0.7.7/CloudDownloader_0.7.7_x64-setup.exe
-[portable]: https://github.com/clover-us/CloudDownloader/releases/download/v0.7.7/CloudDownloader-0.7.7-win-x64.zip
-[checksums]: https://github.com/clover-us/CloudDownloader/releases/download/v0.7.7/SHA256SUMS-0.7.7.txt
+- [Motrix](https://github.com/agalwood/Motrix)：界面布局与蓝白配色参考，保留本项目的统一下载入口与多网盘工作区。
+- [CYQawa/YunX](https://github.com/CYQawa/YunX) 与 [YunX-Desktop](https://github.com/tidain/YunX-Desktop)：网盘协议流程参考，以 Rust 实现适配器。参考版本和许可出处见[协议资料](third-party/notices/cloud-protocol-sources.txt)。
+
+[installer]: https://github.com/clover-us/CloudDownloader/releases/download/v0.7.8/CloudDownloader_0.7.8_x64-setup.exe
+[portable]: https://github.com/clover-us/CloudDownloader/releases/download/v0.7.8/CloudDownloader-0.7.8-win-x64.zip
+[checksums]: https://github.com/clover-us/CloudDownloader/releases/download/v0.7.8/SHA256SUMS-0.7.8.txt
 [releases]: https://github.com/clover-us/CloudDownloader/releases
