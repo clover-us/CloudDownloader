@@ -12,7 +12,7 @@
 ; is never touched. No /T on taskkill: during an auto-update this installer is a
 ; child of the app and must not kill itself.
 
-Function CloudDownloaderStopEngine
+!macro _CloudDownloaderStopEngineBody
   DetailPrint "Closing CloudDownloader before installing..."
   nsExec::ExecToLog 'taskkill /IM CloudDownloader.exe /F'
   Pop $0
@@ -21,19 +21,39 @@ Function CloudDownloaderStopEngine
   nsExec::ExecToLog `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Get-Process -Name aria2c -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like '$INSTDIR\*' } | Stop-Process -Force -ErrorAction SilentlyContinue"`
   Pop $0
   Sleep 800
+!macroend
+
+Function CloudDownloaderStopEngine
+  !insertmacro _CloudDownloaderStopEngineBody
   ; A scanner or a slow shutdown can hold the file for a moment longer; wait
   ; until opening it for append succeeds instead of failing the whole install.
   StrCpy $1 0
-  IfFileExists "$INSTDIR\bin\aria2c.exe" 0 done
-  wait:
+  IfFileExists "$INSTDIR\bin\aria2c.exe" 0 install_done
+  install_wait:
     ClearErrors
     FileOpen $0 "$INSTDIR\bin\aria2c.exe" a
-    IfErrors 0 done
+    IfErrors 0 install_done
     IntOp $1 $1 + 1
-    IntCmp $1 10 done
+    IntCmp $1 10 install_done
     Sleep 500
-    Goto wait
-  done:
+    Goto install_wait
+  install_done:
+    Sleep 200
+FunctionEnd
+
+Function un.CloudDownloaderStopEngine
+  !insertmacro _CloudDownloaderStopEngineBody
+  StrCpy $1 0
+  IfFileExists "$INSTDIR\bin\aria2c.exe" 0 uninstall_done
+  uninstall_wait:
+    ClearErrors
+    FileOpen $0 "$INSTDIR\bin\aria2c.exe" a
+    IfErrors 0 uninstall_done
+    IntOp $1 $1 + 1
+    IntCmp $1 10 uninstall_done
+    Sleep 500
+    Goto uninstall_wait
+  uninstall_done:
     Sleep 200
 FunctionEnd
 
@@ -42,7 +62,7 @@ FunctionEnd
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
-  Call CloudDownloaderStopEngine
+  Call un.CloudDownloaderStopEngine
   ; The app registers clouddownloader:// in HKCU on every start; leaving the key
   ; behind would point Explorer at a removed executable.
   DeleteRegKey HKCU "Software\Classes\clouddownloader"
