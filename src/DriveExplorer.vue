@@ -1025,6 +1025,18 @@ function openMkdir() {
   folderName.value = "";
   mode.value = "mkdir";
 }
+/**
+ * 网盘刚建好的目录不一定马上出现在下一次列表请求里（夸克、迅雷都有延迟），
+ * 所以把创建接口返回的条目直接插进当前列表，用户不必手动刷新。
+ */
+function insertCreated(file: DriveFile) {
+  const add = (list: DriveFile[] | null) => {
+    if (!list || list.some((item) => item.id === file.id)) return list;
+    return [file, ...list];
+  };
+  if (listing.value) listing.value.files = add(listing.value.files)!;
+  fullFiles.value = add(fullFiles.value);
+}
 function prepareShare(files?: DriveFile[]) {
   if (!canShare.value) return;
   shareTargets.value = files ?? [];
@@ -1080,7 +1092,7 @@ async function submit() {
       });
       emit("changed");
     } else if (mode.value === "mkdir") {
-      await invoke("drive_mkdir_at", {
+      const created = await invoke<DriveFile>("drive_mkdir_at", {
         provider: props.provider,
         accountId: listing.value.accountId,
         parent: path.value,
@@ -1089,7 +1101,7 @@ async function submit() {
       mode.value = "";
       folderName.value = "";
       emit("notice", "文件夹已创建");
-      await load();
+      insertCreated(created);
     } else if (mode.value === "rename") {
       if (!renameTarget.value) return;
       const name = renameName.value.trim();
@@ -1744,7 +1756,7 @@ onMounted(async () => {
               required
               autofocus
           /></label>
-          <p class="dialog-note">创建位置：{{ path }}</p></template
+          <p class="dialog-note">创建位置：{{ pathLabel(path) }}</p></template
         >
         <template v-else-if="mode === 'rename'"
           ><label

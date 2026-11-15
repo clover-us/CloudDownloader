@@ -117,6 +117,12 @@ const state = {
     at: number;
   } | null,
   refreshDelayMs: Number((window as any).__MOCK_SLOW__ || 0),
+  // 打开后 cloud_list 像夸克/迅雷一样用内部 id 作目录路径，用来验证界面映射。
+  idPaths: false,
+  // 新建的目录按父路径记下来，cloud_list 会把它们一起返回。
+  createdDirs: new Map<string, { file: MockDriveFile; at: number }[]>(),
+  // 模拟真实网盘「刚建完的目录要过一会儿才出现在列表里」的延迟（毫秒）。
+  newDirLagMs: 0,
 };
 
 // Mirrors src/settings.ts defaultSettings (feat merge).
@@ -149,6 +155,25 @@ const account = (p: Provider) =>
         name: "未登录",
         message: "登录账号后开始下载",
       };
+
+// 夸克/迅雷把内部 id 当作目录路径，界面必须自己换成人可读的名字。
+// 稳定的 32 位十六进制 id，配合 state.idPaths 复现这种形态。
+const mockFolderId = (name: string) => {
+  let hash = 0;
+  for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return hash.toString(16).padStart(8, "0").repeat(4);
+};
+
+type MockDriveFile = {
+  id: string;
+  path: string;
+  name: string;
+  size: number;
+  isDir: boolean;
+  modified: number;
+  created: number;
+  md5: string;
+};
 
 const driveFiles = (prefix: string) => [
   {
@@ -255,10 +280,19 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
   }
   if (cmd === "cloud_list") {
     if (!state.loggedIn[args.provider]) throw "未登录，请先连接账号";
+    const created = (state.createdDirs.get(String(args.path)) ?? [])
+      // 真实网盘刚建完的目录有时要过一会儿才进列表，按需模拟这段延迟。
+      .filter((item) => Date.now() - item.at >= state.newDirLagMs)
+      .map((item) => item.file);
+    const files = [...driveFiles(args.provider), ...created].map((file) =>
+      state.idPaths && file.isDir
+        ? { ...file, path: "/" + mockFolderId(file.name) }
+        : file,
+    );
     return {
       accountId: `${args.provider}-acc`,
       path: args.path,
-      files: driveFiles(args.provider),
+      files,
       nextCursor: null,
     };
   }
@@ -385,7 +419,7 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
     ];
   }
   if (cmd === "drive_mkdir" || cmd === "drive_mkdir_at") {
-    return {
+    const file: MockDriveFile = {
       id: `dir-${Date.now()}`,
       path: `${args.parent === "/" ? "" : args.parent}/${args.name}`,
       name: args.name,
@@ -395,6 +429,11 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
       created: Math.floor(Date.now() / 1000),
       md5: "",
     };
+    const parent = String(args.parent);
+    const saved = state.createdDirs.get(parent) ?? [];
+    saved.push({ file, at: Date.now() });
+    state.createdDirs.set(parent, saved);
+    return file;
   }
   if (cmd === "drive_share") {
     const names =

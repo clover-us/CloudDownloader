@@ -281,6 +281,66 @@ check(
 );
 await shot("05c-drive-baidu");
 
+// --- D2a. Folder paths that are internal ids (quark/xunlei) still read as names ---
+await page.evaluate(() => {
+  window.__MOCK__.state.idPaths = true;
+});
+await page.locator(".drive-providers button", { hasText: "夸克网盘" }).click();
+await page.waitForFunction(
+  () => window.__MOCK__.lastCall("cloud_list")?.args?.provider === "quark",
+);
+await page.waitForSelector(".drive-file-row");
+await page
+  .locator(".drive-file-row .drive-file-name button", { hasText: "电影" })
+  .click();
+await page.waitForFunction(
+  () => (window.__MOCK__.lastCall("cloud_list")?.args?.path ?? "").length > 20,
+);
+await page.locator(".drive-toolbar button", { hasText: "新建文件夹" }).click();
+const mkdirNote = page.locator(".cloud-dialog .dialog-note");
+const mkdirNoteText = await mkdirNote.innerText();
+check(
+  "D10a mkdir dialog shows the folder name, not its internal id",
+  mkdirNoteText.includes("电影") && !/[0-9a-f]{32}/.test(mkdirNoteText),
+);
+await page
+  .locator(".cloud-dialog .icon-button[aria-label='关闭对话框']")
+  .click();
+check(
+  "D10b breadcrumb keeps the folder name",
+  (await page.locator(".drive-breadcrumbs").innerText()).includes("电影"),
+);
+// 网盘刚建完目录时，列表接口可能还没把新目录带回来（夸克/迅雷都有这段延迟）。
+// 界面应该直接用创建接口的返回值补上这一行，而不是等用户手动刷新。
+await page.evaluate(() => {
+  window.__MOCK__.state.newDirLagMs = 60000;
+});
+await page.locator(".drive-toolbar button", { hasText: "新建文件夹" }).click();
+await page.locator(".cloud-dialog label input").fill("新资料夹");
+await page.locator(".cloud-dialog .dialog-actions button.primary").click();
+let folderAppeared = true;
+try {
+  await page.waitForSelector(
+    '.drive-file-row .drive-file-name button:has-text("新资料夹")',
+    { timeout: 2000 },
+  );
+} catch {
+  folderAppeared = false;
+}
+check(
+  "D10c new folder shows up without a manual refresh",
+  folderAppeared && (await page.locator(".cloud-dialog").count()) === 0,
+);
+await page.evaluate(() => {
+  window.__MOCK__.state.newDirLagMs = 0;
+  window.__MOCK__.state.createdDirs.clear();
+});
+await page.evaluate(() => {
+  window.__MOCK__.state.idPaths = false;
+});
+await page.locator(".drive-providers button", { hasText: "百度网盘" }).click();
+await page.waitForSelector(".drive-file-row");
+
 // --- D2b. Search box is identical on every provider and searches sub-folders ---
 await page.locator(".drive-providers button", { hasText: "115 网盘" }).click();
 await page.waitForSelector(".drive-file-row");
