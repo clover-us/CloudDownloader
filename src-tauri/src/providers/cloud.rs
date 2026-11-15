@@ -41,19 +41,21 @@ impl Capacity {
     }
 }
 
-/// 解析 member 接口的容量字段。总容量缺失时判为接口无效，避免拿 0 误拦上传。
+/// 解析容量字段。夸克/UC 放在 `data` 里，迅雷放在 `quota` 里，百度直接放顶层，
+/// 键名也各不相同，所以按「三个作用域 × 一组候选键」取第一个大于 0 的值。
+/// 总容量缺失时判为接口无效，避免拿 0 误拦上传。
 pub fn capacity(value: &Value) -> Result<Capacity, String> {
-    let data = &value["data"];
-    let total = ["total_capacity", "capacity", "total"]
-        .iter()
-        .map(|key| number(&data[*key]))
-        .find(|value| *value > 0)
-        .ok_or("夸克网盘未返回总容量，无法预检空间")?;
-    let used = ["use_capacity", "used_capacity", "used"]
-        .iter()
-        .map(|key| number(&data[*key]))
-        .find(|value| *value > 0)
-        .unwrap_or(0);
+    let scopes = [value.get("data"), value.get("quota"), Some(value)];
+    let pick = |keys: [&str; 4]| {
+        scopes
+            .iter()
+            .flatten()
+            .flat_map(|scope| keys.iter().map(|key| number(&scope[*key])))
+            .find(|value| *value > 0)
+    };
+    let total = pick(["total_capacity", "capacity", "total", "limit"])
+        .ok_or("网盘未返回总容量，无法预检空间")?;
+    let used = pick(["use_capacity", "used_capacity", "used", "usage"]).unwrap_or(0);
     Ok(Capacity { total, used })
 }
 

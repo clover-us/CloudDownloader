@@ -1,3 +1,4 @@
+use super::cloud::{capacity, Capacity};
 use super::{number, text, Download, Session};
 use crate::model::*;
 use reqwest::multipart::{Form, Part};
@@ -162,6 +163,21 @@ impl Session {
             return Err("百度账号已切换，请切回创建任务时的账号，或刷新文件列表".into());
         }
         Ok(Identity { account_id, token })
+    }
+
+    /// 上传前的空间预检。`/api/quota` 在顶层返回 `total` / `used`（字节），
+    /// 和夸克一样只用来提前拦下放不下的上传，接口失败就跳过。
+    pub async fn baidu_capacity(&self) -> Result<Capacity, String> {
+        let identity = self.baidu_identity(None).await?;
+        let data = check(
+            self.json(self.baidu_get("/api/quota").query(&[
+                ("checkfree", "1"),
+                ("checkexpire", "1"),
+                ("bdstoken", identity.token.as_str()),
+            ]))
+            .await?,
+        )?;
+        capacity(&data)
     }
 
     pub async fn drive_list(

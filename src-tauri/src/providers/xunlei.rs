@@ -6,7 +6,7 @@
 // public client id/version that the browser at pan.xunlei.com uses, and every
 // request is authenticated with the cookies captured from the login WebView.
 // The captcha sign is a deterministic md5 chain over the public web salt list.
-use super::cloud::{check, entry, Page};
+use super::cloud::{capacity, check, entry, Capacity, Page};
 use super::{crypto, number, text, Session};
 use crate::model::*;
 use base64::Engine as _;
@@ -352,6 +352,14 @@ impl Session {
             .find(|value| !value.is_empty())
             .unwrap_or_else(|| "迅雷账号".into());
         Ok((id, name))
+    }
+
+    /// 上传前的空间预检。`GET /drive/v1/about` 返回 `quota.limit` / `quota.usage`，
+    /// 响应没有 `data` 包裹，需要单独的 captcha action。
+    pub async fn xunlei_capacity(&self) -> Result<Capacity, String> {
+        let captcha = self.captcha("GET:/drive/v1/about").await?;
+        let value = self.api_get("/about", &[], &captcha).await?;
+        capacity(&value)
     }
 
     pub async fn xunlei_page(

@@ -86,6 +86,22 @@ fn quark_capacity_precheck_uses_total_and_used_bytes() {
 }
 
 #[test]
+fn xunlei_and_baidu_capacity_shapes_are_understood() {
+    // 迅雷 /drive/v1/about 把配额放在 quota 里，键名是 limit/usage，且没有 data 包裹。
+    let xunlei = cloud::capacity(&json!({
+        "kind": "drive#about",
+        "quota": {"limit": 10_000, "usage": 9_500, "usage_in_trash": 100}
+    }))
+    .unwrap();
+    assert_eq!((xunlei.total, xunlei.used), (10_000, 9_500));
+    assert_eq!(xunlei.free(), 500);
+    // 百度 /api/quota 直接放在顶层，键名是 total/used。
+    let baidu = cloud::capacity(&json!({"errno": 0, "total": 10_000, "used": 9_500})).unwrap();
+    assert_eq!((baidu.total, baidu.used), (10_000, 9_500));
+    assert_eq!(baidu.shortfall(800), 300);
+}
+
+#[test]
 fn quark_upload_error_codes_explain_themselves() {
     // 夸克上传接口用 32003/32004 表示空间不足与单文件超限，不能落到通用提示。
     let space = cloud::check(Provider::Quark, json!({"code":32003,"message":"space"})).unwrap_err();
