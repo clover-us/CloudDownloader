@@ -1,15 +1,15 @@
 # 使用指南
 
-下载 [v0.6.7 Release](https://github.com/clover-us/CloudDownloader/releases/tag/v0.6.7)：[Windows 安装版](https://github.com/clover-us/CloudDownloader/releases/download/v0.6.7/CloudDownloader_0.6.7_x64-setup.exe) · [便携版](https://github.com/clover-us/CloudDownloader/releases/download/v0.6.7/CloudDownloader-0.6.7-win-x64.zip) · [SHA-256 校验](https://github.com/clover-us/CloudDownloader/releases/download/v0.6.7/SHA256SUMS-0.6.7.txt)。
+下载 [v0.7.7 Release](https://github.com/clover-us/CloudDownloader/releases/tag/v0.7.7)：[Windows 安装版](https://github.com/clover-us/CloudDownloader/releases/download/v0.7.7/CloudDownloader_0.7.7_x64-setup.exe) · [便携版](https://github.com/clover-us/CloudDownloader/releases/download/v0.7.7/CloudDownloader-0.7.7-win-x64.zip) · [SHA-256 校验](https://github.com/clover-us/CloudDownloader/releases/download/v0.7.7/SHA256SUMS-0.7.7.txt)。
 
-1. 推荐运行 `CloudDownloader_0.6.7_x64-setup.exe` 中文安装包，默认安装到当前用户目录并创建快捷方式，缺少 WebView2 时会从微软下载运行时。也可解压便携版压缩包后运行 `CloudDownloader.exe`，移动时保留完整目录结构。
+1. 推荐运行 `CloudDownloader_0.7.7_x64-setup.exe` 中文安装包，默认安装到当前用户目录并创建快捷方式，缺少 WebView2 时会从微软下载运行时。也可解压便携版压缩包后运行 `CloudDownloader.exe`，移动时保留完整目录结构。
 2. 「新建下载」只有一个输入框：粘贴 HTTP/HTTPS 文件直链、网盘分享文字或 `magnet:?xt=urn:btih:…` 磁力链接，程序自动识别类型，点击「解析链接」预览文件。也可点击「导入种子」选择本地 `.torrent` 文件，种子的 HTTP/HTTPS 地址直接粘贴即可。
 3. 网盘分享自动识别提取码，可手动补充。需要登录的网盘在官方窗口自行完成登录；蓝奏云、优享版和 UC 分享可先尝试免登录，服务端要求登录时再连接账号。
 4. 普通文件可改文件名及连接数；网盘和 BT 可以选择文件，网盘还可浏览子文件夹。确认保存目录后点击「开始下载」。磁力解析可取消，获取元数据阶段不下载文件内容。
 5. 任务支持暂停、继续、重试；文件夹下载与文件夹上传在列表中合并为一行，展开可查看子任务。列表表头提供全选、批量暂停 / 继续 / 移除，以及「已完成」筛选下的「清除已完成」。程序退出再启动后，未完成任务保持暂停；继续时重新核对下载来源。
 6. 点击窗口右上角关闭按钮默认收进系统托盘，传输继续运行。点击托盘图标或右键选择「打开主窗口」恢复窗口；右键选择「退出程序」才会结束程序与下载引擎。「设置 → 通用」可把关闭行为改为直接退出。
 
-需要 Windows 10/11 x64 和 Microsoft Edge WebView2 Runtime。下载引擎位于 `bin/aria2c.exe`，程序按主 EXE 所在目录定位引擎，不依赖启动时的工作目录。第三方许可资料位于 `bin/notices/`。
+需要 Windows 10/11 x64 和 Microsoft Edge WebView2 Runtime。下载引擎随包携带在 `bin\aria2c.exe`，启动时复制到 `%LOCALAPPDATA%\CloudDownloader\engine\` 并从副本运行（随版本自动刷新），安装目录不会被运行中的引擎占用，升级时可随时覆盖。第三方许可资料位于 `bin/notices/`。
 
 ## 主题切换
 
@@ -88,7 +88,7 @@
 
 ## 从浏览器发送链接
 
-- 应用会注册 `clouddownloader://` 协议。把链接交给应用后，主窗口会回到前台、自动填好链接并立即识别类型；确认文件后再点「开始下载」，不会跳过预览直接下载。
+- 应用会注册 `clouddownloader://` 协议。把链接交给应用后，主窗口会回到前台并弹出接力确认窗（见下节）；确认后立刻识别链接并开始下载，不再停在下载框里等第二次点击。
 - 命令行或网页里的写法（链接需要 URL 编码）：
 
 ```powershell
@@ -100,11 +100,23 @@ start "clouddownloader://add?url=https%3A%2F%2Fexample.com%2Ffile.zip"
 - Chrome/Edge 首次点击会询问是否打开 CloudDownloader，勾选「始终允许」后不再提示。
 - 网页里点下载按钮直接开始的普通文件（`Content-Disposition: attachment`）不会被协议接管：浏览器不允许外部程序拦截自己的下载。这类下载需要安装 `extension/` 里的浏览器扩展。
 
+### 接力确认窗
+
+不论链接来自协议还是扩展，应用都会先弹一个小窗，显示文件名、缩略链接和来源站点（取不到来源时显示「来源未知」），三个选择：
+
+- **交给 CloudDownloader**：立刻识别链接、按浏览器带来的文件名和请求头建任务并开始下载，Cookie、来源站点、浏览器标识照旧带上。15 秒没有操作就默认执行这一项，按钮上的倒计时显示剩余秒数。
+- **用浏览器下载**：把链接交回默认浏览器重新开始下载（扩展那份已经停下，所以要重新开始）。应用交回前会先告诉本机桥「这条放过」，扩展一分钟内不会再接管它，不会来回弹窗。
+- **忽略**：什么都不做。被扩展接管的那份下载已经停下，需要的话在网页里重新点一次。
+
+链接以 `主机名/…/文件名` 的缩略样式显示，悬停可看完整地址；单击在浏览器打开，双击复制链接，复制后短暂显示「已复制链接」。
+
+确认窗的「用浏览器下载」防循环需要 **0.2.1 及以上**的扩展：升级应用后请在 `edge://extensions`（Chrome 为 `chrome://extensions`）里点一次「重新加载」。旧版扩展不认识「这条放过」，选「用浏览器下载」仍会出现一次接管循环。
+
 ### 用扩展接管普通下载
 
 1. 在 `chrome://extensions`（Edge 为 `edge://extensions`）打开开发者模式，「加载已解压的扩展程序」选择仓库的 `extension/` 目录。
 2. 打开扩展选项，点「测试连接」，显示「已连接」表示桌面端在运行、端口一致。
-3. 之后在网页里点下载，浏览器会先把地址和它携带的 Cookie、来源页面、浏览器标识交给桌面端，桌面端收下后浏览器取消自己那份，改由 CloudDownloader 下载。
+3. 之后在网页里点下载，扩展会先把地址和它携带的 Cookie、来源页面、浏览器标识交给桌面端，并停下浏览器自己那份；桌面端弹出接力确认窗，确认后由 CloudDownloader 开始下载。
 4. 扩展默认接管所有站点；可在选项里填站点白名单或体积下限，只接管网盘等特定站点。桌面端没开时浏览器会照常下载，不会丢失。
 5. 链接右键菜单有「用 CloudDownloader 下载」，用于手动发送。
 
