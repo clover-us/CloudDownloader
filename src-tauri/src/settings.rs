@@ -251,43 +251,49 @@ impl Settings {
 
 pub fn save(store: &crate::store::Store, settings: &Settings) -> Result<Settings, String> {
     settings.validate()?;
-    store.set_setting("download_dir", &settings.download_dir)?;
-    store.set_setting(
-        "max_overall_download_limit",
-        &settings.max_overall_download_limit.to_string(),
-    )?;
-    store.set_setting(
-        "max_concurrent_downloads",
-        &settings.max_concurrent_downloads.to_string(),
-    )?;
-    store.set_setting(
-        "default_connections",
-        &settings.default_connections.to_string(),
-    )?;
-    store.set_setting("close_action", settings.close_action.key())?;
-    store.set_setting(
-        "auto_check_updates",
-        if settings.auto_check_updates {
-            "1"
-        } else {
-            "0"
-        },
-    )?;
-    store.set_setting("upload_chunk_mib", &settings.upload_chunk_mib.to_string())?;
-    store.set_setting(
-        "upload_concurrency",
-        &settings.upload_concurrency.to_string(),
-    )?;
-    store.set_setting(
-        "upload_part_concurrency",
-        &settings.upload_part_concurrency.to_string(),
-    )?;
-    store.set_setting("min_split_mib", &settings.min_split_mib.to_string())?;
-    store.set_setting(
-        "browser_bridge",
-        if settings.browser_bridge { "1" } else { "0" },
-    )?;
-    store.set_setting("bridge_port", &settings.bridge_port.to_string())?;
+    // Thirteen keys are written together; a failure halfway through used to leave
+    // a mixture of old and new settings (a new download directory with the old
+    // bridge port, for example).
+    store.transaction(|store| {
+        store.set_setting("download_dir", &settings.download_dir)?;
+        store.set_setting(
+            "max_overall_download_limit",
+            &settings.max_overall_download_limit.to_string(),
+        )?;
+        store.set_setting(
+            "max_concurrent_downloads",
+            &settings.max_concurrent_downloads.to_string(),
+        )?;
+        store.set_setting(
+            "default_connections",
+            &settings.default_connections.to_string(),
+        )?;
+        store.set_setting("close_action", settings.close_action.key())?;
+        store.set_setting(
+            "auto_check_updates",
+            if settings.auto_check_updates {
+                "1"
+            } else {
+                "0"
+            },
+        )?;
+        store.set_setting("upload_chunk_mib", &settings.upload_chunk_mib.to_string())?;
+        store.set_setting(
+            "upload_concurrency",
+            &settings.upload_concurrency.to_string(),
+        )?;
+        store.set_setting(
+            "upload_part_concurrency",
+            &settings.upload_part_concurrency.to_string(),
+        )?;
+        store.set_setting("min_split_mib", &settings.min_split_mib.to_string())?;
+        store.set_setting(
+            "browser_bridge",
+            if settings.browser_bridge { "1" } else { "0" },
+        )?;
+        store.set_setting("bridge_port", &settings.bridge_port.to_string())?;
+        Ok(())
+    })?;
     Ok(settings.clone())
 }
 

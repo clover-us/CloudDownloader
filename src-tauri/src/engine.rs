@@ -144,12 +144,29 @@ fn engine_copy(bundled: &Path) -> Result<PathBuf, String> {
     let directory = base.join("CloudDownloader").join("engine");
     std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
     let target = directory.join("aria2c.exe");
-    let current = std::fs::metadata(&target).ok().map(|meta| meta.len());
-    let shipped = std::fs::metadata(bundled).map_err(|e| e.to_string())?.len();
-    if current != Some(shipped) {
+    let shipped = std::fs::metadata(bundled).map_err(|e| e.to_string())?;
+    let current = std::fs::metadata(&target);
+    // Length alone is not enough: a rebuilt engine of the same size kept the old
+    // binary around. Use length, modification time and a cheap content check.
+    let same = match current {
+        Ok(current) => {
+            current.len() == shipped.len()
+                && current.modified().ok() == shipped.modified().ok()
+                && same_contents(bundled, &target)
+        }
+        Err(_) => false,
+    };
+    if !same {
         std::fs::copy(bundled, &target).map_err(|e| e.to_string())?;
     }
     Ok(target)
+}
+
+fn same_contents(left: &Path, right: &Path) -> bool {
+    match (std::fs::read(left), std::fs::read(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }
 
 impl Rpc {

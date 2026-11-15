@@ -755,19 +755,39 @@ pub struct LocalEntry {
     pub relative: String,
 }
 
+// This command walks the disk synchronously on the WebView thread. Without
+// bounds, a junction loop or a huge tree froze the window indefinitely.
+const MAX_LOCAL_FILES: usize = 20_000;
+const MAX_LOCAL_DEPTH: usize = 32;
+
 #[tauri::command]
-pub fn collect_local_files(root: String) -> Result<Vec<LocalEntry>, String> {
+pub fn collect_local_files(window: WebviewWindow, root: String) -> Result<Vec<LocalEntry>, String> {
+    trusted(&window)?;
     fn walk(
         dir: &std::path::Path,
         base: &std::path::Path,
+        depth: usize,
+        visited: &mut HashSet<PathBuf>,
         out: &mut Vec<LocalEntry>,
     ) -> Result<(), String> {
+        if depth > MAX_LOCAL_DEPTH {
+            return Err(format!("文件夹层级过深（超过 {MAX_LOCAL_DEPTH} 层）"));
+        }
+        // Junctions and symlinks can point back at an ancestor: skip anything
+        // already walked instead of recursing forever.
+        let key = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+        if !visited.insert(key) {
+            return Ok(());
+        }
         for entry in std::fs::read_dir(dir).map_err(|_| "无法读取所选文件夹")? {
             let entry = entry.map_err(|_| "无法读取所选文件夹")?;
             let path = entry.path();
             if path.is_dir() {
-                walk(&path, base, out)?;
+                walk(&path, base, depth + 1, visited, out)?;
             } else if path.is_file() {
+                if out.len() >= MAX_LOCAL_FILES {
+                    return Err(format!("所选文件夹文件过多（超过 {MAX_LOCAL_FILES} 个）"));
+                }
                 let relative = path
                     .parent()
                     .and_then(|parent| parent.strip_prefix(base).ok())
@@ -786,7 +806,7 @@ pub fn collect_local_files(root: String) -> Result<Vec<LocalEntry>, String> {
         return Err("请选择有效的文件夹".into());
     }
     let mut out = Vec::new();
-    walk(base, base, &mut out)?;
+    walk(base, base, 0, &mut HashSet::new(), &mut out)?;
     out.sort_by(|a, b| a.relative.cmp(&b.relative).then(a.path.cmp(&b.path)));
     Ok(out)
 }

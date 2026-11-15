@@ -43,12 +43,19 @@ pub fn base64_decode(value: &str) -> Result<Vec<u8>, String> {
         .map_err(|_| "网盘返回的编码数据无效".into())
 }
 pub fn sign123(path: &str, seconds: i64, random: u32) -> (String, String) {
-    let time = chrono::DateTime::from_timestamp(seconds + 57600, 0)
-        .unwrap()
+    // A bogus clock is the only way to land outside the supported range, and
+    // panicking here would abort the process in release builds. Digits stay
+    // identical to the old table lookup; anything else wraps.
+    let shifted = seconds.checked_add(57600).unwrap_or(seconds);
+    let time = chrono::DateTime::from_timestamp(shifted, 0)
+        .unwrap_or_else(chrono::Utc::now)
         .format("%Y%m%d%H%M")
         .to_string();
     let table = b"adefghlmyijnopkqrstubcvwsz";
-    let mapped: Vec<_> = time.bytes().map(|c| table[(c - b'0') as usize]).collect();
+    let mapped: Vec<_> = time
+        .bytes()
+        .map(|c| table[usize::from(c.wrapping_sub(b'0')) % table.len()])
+        .collect();
     let key = format!("{:x}", crc32fast::hash(&mapped));
     let input = format!("{seconds}|{random}|{path}|web|3|{key}");
     (

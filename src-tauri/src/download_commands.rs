@@ -179,14 +179,19 @@ pub async fn inspect_download(
         if let Ok((torrent, _)) = bt::load(&base, &hash) {
             return Ok(Inspection::Bt { torrent });
         }
-        let mut jobs = state.bt_jobs.lock().await;
-        if jobs.len() >= 3 {
-            return Err("正在解析的磁力链接过多，请取消其他解析后重试".into());
+        // The job map is only ever locked for the insert itself: holding it across
+        // aria2.addUri made unrelated inspections wait on a slow engine.
+        {
+            let jobs = state.bt_jobs.lock().await;
+            if jobs.len() >= 3 {
+                return Err("正在解析的磁力链接过多，请取消其他解析后重试".into());
+            }
         }
         let id = uuid::Uuid::new_v4().to_string();
         let directory = base.join("bt-staging").join(&id);
         std::fs::create_dir_all(&directory).map_err(|_| "无法创建磁力解析目录")?;
-        let result = rpc(&state)?.call("aria2.addUri", vec![json!([magnet]), json!({"dir": directory, "bt-metadata-only":"true", "bt-save-metadata":"true", "bt-max-peers":"64", "seed-time":"0", "follow-torrent":"false"})]).await;
+        let rpc = rpc(&state)?;
+        let result = rpc.call("aria2.addUri", vec![json!([magnet]), json!({"dir": directory, "bt-metadata-only":"true", "bt-save-metadata":"true", "bt-max-peers":"64", "seed-time":"0", "follow-torrent":"false"})]).await;
         let gid = match result {
             Ok(v) => v.as_str().map(String::from).ok_or("磁力解析任务创建失败")?,
             Err(e) => {
@@ -194,6 +199,14 @@ pub async fn inspect_download(
                 return Err(e);
             }
         };
+        let mut jobs = state.bt_jobs.lock().await;
+        if jobs.len() >= 3 {
+            // Another inspection took the last slot while aria2 was starting.
+            drop(jobs);
+            let _ = rpc.stop_for_removal(&gid).await;
+            let _ = std::fs::remove_dir(&directory);
+            return Err("正在解析的磁力链接过多，请取消其他解析后重试".into());
+        }
         jobs.insert(
             id.clone(),
             MetadataJob {
@@ -265,26 +278,43 @@ pub async fn cancel_bt_inspection(
     id: String,
 ) -> Result<(), String> {
     trusted(&window)?;
-    let mut jobs = state.bt_jobs.lock().await;
-    if let Some(job) = jobs.get(&id) {
-        clean(job, &rpc(&state)?).await?;
-        jobs.remove(&id);
+    let Some(job) = state.bt_jobs.lock().await.remove(&id) else {
+        return Ok(());
+    };
+    let rpc = match rpc(&state) {
+        Ok(rpc) => rpc,
+        Err(error) => {
+            state.bt_jobs.lock().await.insert(id, job);
+            return Err(error);
+        }
+    };
+    if let Err(error) = clean(&job, &rpc).await {
+        // The engine copy is still there, so keep the record around: expiring it
+        // later is better than leaking a staging download.
+        state.bt_jobs.lock().await.insert(id, job);
+        return Err(error);
     }
     Ok(())
 }
 
 pub async fn expire_jobs(state: &AppState, rpc: &crate::engine::Rpc) {
-    let Ok(mut jobs) = state.bt_jobs.try_lock() else {
-        return;
+    // Scan under try_lock (a busy tick must not stall the poller), then expire
+    // each job with the map unlocked so stopping aria2 never blocks cancels.
+    let ids: Vec<String> = {
+        let Ok(jobs) = state.bt_jobs.try_lock() else {
+            return;
+        };
+        jobs.iter()
+            .filter(|(_, job)| job.started.elapsed() > Duration::from_secs(180))
+            .map(|(id, _)| id.clone())
+            .collect()
     };
-    let ids: Vec<_> = jobs
-        .iter()
-        .filter(|(_, job)| job.started.elapsed() > Duration::from_secs(180))
-        .map(|(id, _)| id.clone())
-        .collect();
     for id in ids {
-        if clean(&jobs[&id], rpc).await.is_ok() {
-            jobs.remove(&id);
+        let Some(job) = state.bt_jobs.lock().await.remove(&id) else {
+            continue;
+        };
+        if clean(&job, rpc).await.is_err() {
+            state.bt_jobs.lock().await.insert(id, job);
         }
     }
 }
@@ -297,15 +327,32 @@ pub async fn poll_bt_inspection(
     id: String,
 ) -> Result<Inspection, String> {
     trusted(&window)?;
-    let mut jobs = state.bt_jobs.lock().await;
-    let job = jobs.get(&id).ok_or("磁力解析已取消或超时，请重新解析")?;
-    let rpc = rpc(&state)?;
-    let status = rpc
+    // Take the job out of the map before awaiting: the old code held the lock
+    // across tellStatus and clean, which froze the cancel button for seconds
+    // and made expire_jobs skip its turn on every try_lock.
+    let Some(job) = state.bt_jobs.lock().await.remove(&id) else {
+        return Err("磁力解析已取消或超时，请重新解析".into());
+    };
+    let rpc = match rpc(&state) {
+        Ok(rpc) => rpc,
+        Err(error) => {
+            state.bt_jobs.lock().await.insert(id, job);
+            return Err(error);
+        }
+    };
+    let status = match rpc
         .call(
             "aria2.tellStatus",
             vec![json!(job.gid), json!(["status", "errorCode"])],
         )
-        .await?;
+        .await
+    {
+        Ok(status) => status,
+        Err(error) => {
+            state.bt_jobs.lock().await.insert(id, job);
+            return Err(error);
+        }
+    };
     let path = job.directory.join(format!("{}.torrent", job.hash));
     if status["status"] == "complete" && path.is_file() {
         let result = (|| {
@@ -316,25 +363,30 @@ pub async fn poll_bt_inspection(
             let base = app.path().app_data_dir().map_err(|_| "无法定位种子缓存")?;
             bt::cache(&base, &data)
         })();
-        clean(job, &rpc).await?;
-        jobs.remove(&id);
+        if let Err(error) = clean(&job, &rpc).await {
+            state.bt_jobs.lock().await.insert(id, job);
+            return Err(error);
+        }
         return result.map(|torrent| Inspection::Bt { torrent });
     }
     if matches!(status["status"].as_str(), Some("error" | "removed"))
         || job.started.elapsed() > Duration::from_secs(175)
     {
-        clean(job, &rpc).await?;
-        jobs.remove(&id);
+        if let Err(error) = clean(&job, &rpc).await {
+            state.bt_jobs.lock().await.insert(id, job);
+            return Err(error);
+        }
         return Err("未获取到种子信息，请检查网络、Tracker 或资源是否有在线节点，也可直接导入 .torrent 文件".into());
     }
+    let message = if status["status"] == "waiting" {
+        "等待下载引擎空闲以获取种子信息…"
+    } else {
+        "正在向节点获取种子信息，尚未下载文件…"
+    };
+    state.bt_jobs.lock().await.insert(id.clone(), job);
     Ok(Inspection::BtPending {
         id,
-        message: if status["status"] == "waiting" {
-            "等待下载引擎空闲以获取种子信息…"
-        } else {
-            "正在向节点获取种子信息，尚未下载文件…"
-        }
-        .into(),
+        message: message.into(),
     })
 }
 

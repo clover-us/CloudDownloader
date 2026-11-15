@@ -398,6 +398,26 @@ fn save(app: &tauri::AppHandle, task: &UploadRecord) -> Result<(), String> {
     Ok(())
 }
 
+/// Clears the running slot on drop, including when the upload task unwinds.
+/// Without it a panic inside `run_upload` left the task marked as running with
+/// no cancel handle, so pause and restart were both refused.
+struct RunningGuard {
+    app: tauri::AppHandle,
+    id: String,
+}
+
+impl Drop for RunningGuard {
+    fn drop(&mut self) {
+        let state = self.app.state::<AppState>();
+        state
+            .uploads
+            .running
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(&self.id);
+    }
+}
+
 impl UploadManager {
     pub fn is_running(&self, id: &str) -> bool {
         self.running.lock().unwrap().contains_key(id)
@@ -419,14 +439,16 @@ impl UploadManager {
         let (slots, parts) = self.take_limits();
         tauri::async_runtime::spawn(async move {
             let id = task.id.clone();
+            let _guard = RunningGuard {
+                app: app.clone(),
+                id: id.clone(),
+            };
             let stop = Arc::new(AtomicBool::new(false));
             let result = tokio::select! {
                 result = run_upload(&app, task, slots, parts, stop.clone()) => result,
                 _ = receiver.changed() => { stop.store(true, Ordering::Relaxed); Err("__paused".into()) }
             };
-            let state = app.state::<AppState>();
             finish_state(&app, &id, result);
-            state.uploads.running.lock().unwrap().remove(&id);
             let _ = app.emit_to("main", "tasks-changed", ());
         });
         Ok(())

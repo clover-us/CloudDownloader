@@ -58,13 +58,73 @@ fn trusted(window: &WebviewWindow) -> Result<(), String> {
 }
 
 fn rpc(state: &AppState) -> Result<Rpc, String> {
-    state
-        .engine
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|e| e.rpc.clone())
-        .ok_or_else(|| state.engine_error.lock().unwrap().clone())
+    let mut engine = state.engine.lock().unwrap();
+    let Some(engine) = engine.as_mut() else {
+        return Err(state.engine_error.lock().unwrap().clone());
+    };
+    if !engine.alive() {
+        // aria2 exited on its own. Fail immediately instead of letting every
+        // request wait out its timeout; poll_engine brings the engine back.
+        let mut error = state.engine_error.lock().unwrap();
+        if error.is_empty() {
+            *error = "下载引擎已停止，正在尝试重新启动".into();
+        }
+        return Err(error.clone());
+    }
+    Ok(engine.rpc.clone())
+}
+
+/// When the engine was last restarted, so a broken setup (missing binary, port
+/// blocked) is retried once every half minute instead of on every tick.
+static LAST_ENGINE_RESTART: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+/// Starts a fresh aria2 after the old process disappeared.
+///
+/// The new process knows none of the old GIDs, so the affected tasks are parked
+/// as paused with a hint instead of sitting at a frozen progress bar.
+async fn restart_engine(app: &tauri::AppHandle) {
+    {
+        let mut last = LAST_ENGINE_RESTART
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if last.is_some_and(|at| at.elapsed() < Duration::from_secs(30)) {
+            return;
+        }
+        *last = Some(std::time::Instant::now());
+    }
+    let state = app.state::<AppState>();
+    let settings = Settings::load(&state.store.lock().unwrap());
+    let started = tauri::async_runtime::spawn_blocking(move || Engine::start_with(&settings)).await;
+    let fresh = match started {
+        Ok(Ok(fresh)) => fresh,
+        Ok(Err(error)) => {
+            *state.engine.lock().unwrap() = None;
+            *state.engine_error.lock().unwrap() = error;
+            return;
+        }
+        Err(error) => {
+            *state.engine.lock().unwrap() = None;
+            *state.engine_error.lock().unwrap() = error.to_string();
+            return;
+        }
+    };
+    *state.engine.lock().unwrap() = Some(fresh);
+    *state.engine_error.lock().unwrap() = String::new();
+    let store = state.store.lock().unwrap();
+    for mut task in store.tasks().unwrap_or_default() {
+        if task.gid.is_none() {
+            continue;
+        }
+        task.gid = None;
+        task.speed = 0;
+        task.upload_speed = 0;
+        task.connections = 0;
+        if matches!(task.status.as_str(), "active" | "waiting" | "seeding") {
+            task.status = "paused".into();
+            task.error = "下载引擎已重启，请点击恢复继续下载".into();
+        }
+        let _ = store.save(&task);
+    }
 }
 
 #[tauri::command]
@@ -204,12 +264,6 @@ fn set_directory(
         .lock()
         .unwrap()
         .set_setting("download_dir", &path)
-}
-
-#[tauri::command]
-fn settings_get(window: WebviewWindow, state: State<'_, AppState>) -> Result<Settings, String> {
-    trusted(&window)?;
-    Ok(Settings::load(&state.store.lock().unwrap()))
 }
 
 /// 保存偏好设置，并立即把限速、同时下载数同步给下载引擎。
@@ -805,10 +859,19 @@ async fn apply_task_action(
             if task.status != "complete" {
                 task.status = "paused".into();
             }
-            let store = state.store.lock().unwrap();
-            // Keep a stopped, retryable record if filesystem cleanup fails.
-            store.save(&task)?;
-            task_removal::remove_record(&store, &task, delete_files)?;
+            // Keep a stopped, retryable record if filesystem cleanup fails, but
+            // do the file work outside the store lock: canonicalizing and
+            // deleting can block for seconds, and that lock is shared with the
+            // snapshot command and the bridge.
+            let others = {
+                let store = state.store.lock().unwrap();
+                store.save(&task)?;
+                store.tasks()?
+            };
+            if delete_files {
+                task_removal::delete_files(&task, &others)?;
+            }
+            state.store.lock().unwrap().remove(&task.id)?;
         }
         _ => return Err("未知任务操作".into()),
     }
@@ -951,17 +1014,16 @@ fn open_directory(
     id: Option<String>,
 ) -> Result<(), String> {
     trusted(&window)?;
-    let store = state.store.lock().unwrap();
-    let path = if let Some(id) = id {
-        store
-            .tasks()?
-            .into_iter()
-            .find(|t| t.id == id)
-            .map(|t| t.directory)
-            .ok_or("任务不存在")?
-    } else {
-        store.setting("download_dir").ok_or("未设置下载目录")?
+    let path = {
+        let store = state.store.lock().unwrap();
+        if let Some(id) = id {
+            store.task(&id)?.map(|t| t.directory).ok_or("任务不存在")?
+        } else {
+            store.setting("download_dir").ok_or("未设置下载目录")?
+        }
     };
+    // Opening runs the shell synchronously; the store lock must be free by then
+    // or a slow Explorer start freezes the whole app.
     tauri_plugin_opener::open_path(path, None::<&str>).map_err(|e| e.to_string())
 }
 
@@ -979,10 +1041,17 @@ async fn poll_engine(app: tauri::AppHandle) {
     loop {
         tokio::time::sleep(Duration::from_millis(1000)).await;
         let state = app.state::<AppState>();
-        let Ok(rpc) = rpc(&state) else {
-            continue;
+        let rpc = match rpc(&state) {
+            Ok(rpc) => rpc,
+            Err(_) => {
+                restart_engine(&app).await;
+                let _ = app.emit_to("main", "tasks-changed", ());
+                continue;
+            }
         };
         download_commands::expire_jobs(&state, &rpc).await;
+        // One table read per tick: the loop below used to rescan every row for
+        // each task it touched, so a tick cost N² deserializations.
         let tasks = state.store.lock().unwrap().tasks().unwrap_or_default();
         for mut task in tasks {
             if !matches!(
@@ -994,7 +1063,7 @@ async fn poll_engine(app: tauri::AppHandle) {
             let Some(gid) = &task.gid else {
                 continue;
             };
-            let before_status = task.status.clone();
+            let before = task.clone();
             let Ok(value) = rpc
                 .call(
                     "aria2.tellStatus",
@@ -1079,17 +1148,28 @@ async fn poll_engine(app: tauri::AppHandle) {
                     }
                 }
             }
-            let store = state.store.lock().unwrap();
-            if retry.is_some()
-                || store
-                    .tasks()
-                    .unwrap_or_default()
-                    .iter()
-                    .any(|t| t.id == task.id && t.gid == task.gid && t.status == before_status)
-            {
-                let _ = store.save(&task);
+            // Only write when the engine actually reported something new, and
+            // only when the stored record is still the one this tick read: a
+            // pause or remove that landed meanwhile must win.
+            let changed = before.status != task.status
+                || before.completed != task.completed
+                || before.size != task.size
+                || before.speed != task.speed
+                || before.upload_speed != task.upload_speed
+                || before.connections != task.connections
+                || before.error != task.error;
+            if !changed && retry.is_none() {
+                continue;
             }
-            drop(store);
+            {
+                let store = state.store.lock().unwrap();
+                let unchanged = store.task(&task.id).ok().flatten().is_some_and(|current| {
+                    current.gid == before.gid && current.status == before.status
+                });
+                if retry.is_some() || unchanged {
+                    let _ = store.save(&task);
+                }
+            }
             if let Some(task) = retry {
                 let handle = app.clone();
                 tauri::async_runtime::spawn(async move {
@@ -1303,7 +1383,6 @@ pub fn run() {
             parse_link,
             snapshot,
             set_directory,
-            settings_get,
             settings_set,
             take_handoff,
             bridge_status,

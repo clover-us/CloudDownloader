@@ -1,18 +1,13 @@
-use crate::{
-    model::{safe_name, Task},
-    store::Store,
-};
+use crate::model::{safe_name, Task};
 use std::{fs, io::ErrorKind, path::Path};
 
-/// Called only after the engine has released this task's output files.
-pub fn remove_record(store: &Store, task: &Task, delete_files: bool) -> Result<(), String> {
-    if delete_files {
-        delete_local_files(store, task)?;
-    }
-    store.remove(&task.id)
-}
-
-fn delete_local_files(store: &Store, task: &Task) -> Result<(), String> {
+/// Deletes a task's output, after checking that no other record uses the files.
+///
+/// The caller passes the other records because it must load them under the store
+/// lock and then drop it: canonicalizing paths and deleting files can take
+/// seconds on a busy disk, and holding the shared lock there would freeze the
+/// task list and the browser bridge.
+pub fn delete_files(task: &Task, others: &[Task]) -> Result<(), String> {
     let directory = Path::new(&task.directory);
     if !directory.is_absolute() || safe_name(&task.name) != task.name {
         return Err("任务的本地文件路径无效，未删除文件。可取消勾选，仅移除任务记录。".into());
@@ -27,14 +22,14 @@ fn delete_local_files(store: &Store, task: &Task) -> Result<(), String> {
     };
     let files = output_files(task, &directory)?;
     // Legacy or overlapping task records must not let one task delete another's output.
-    for other in store.tasks()? {
+    for other in others {
         if other.id == task.id {
             continue;
         }
         let Ok(other_dir) = fs::canonicalize(&other.directory) else {
             continue;
         };
-        for other_file in output_files(&other, &other_dir)? {
+        for other_file in output_files(other, &other_dir)? {
             if files.iter().any(|file| same_path(file, &other_file)) {
                 return Err("该文件或续传信息还被其他下载任务使用。请先处理其他任务，或取消勾选，仅移除当前任务记录。".into());
             }
@@ -89,6 +84,15 @@ fn delete_local_files(store: &Store, task: &Task) -> Result<(), String> {
     Ok(())
 }
 
+/// Test-only convenience: delete the files and the record in one step.
+#[cfg(test)]
+pub fn remove_record(store: &crate::store::Store, task: &Task, delete: bool) -> Result<(), String> {
+    if delete {
+        delete_files(task, &store.tasks()?)?;
+    }
+    store.remove(&task.id)
+}
+
 fn output_files(task: &Task, directory: &Path) -> Result<Vec<std::path::PathBuf>, String> {
     if task.bt.is_some() {
         let mut files: Vec<_> = crate::bt::outputs(task)?
@@ -122,6 +126,7 @@ fn cleanup_error(path: &Path, error: std::io::Error) -> String {
 mod tests {
     use super::*;
     use crate::model::{Provider, ShareFile, ShareLink};
+    use crate::store::Store;
     use std::path::PathBuf;
 
     struct Fixture {
