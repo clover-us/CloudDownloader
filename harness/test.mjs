@@ -845,13 +845,19 @@ await page.waitForFunction(
 
 // --- M. Browser hand-off (clouddownloader://) ---
 await mock("handoff", "https://example.com/files/report.pdf");
+await page.waitForSelector(".handoff-dialog");
+check(
+  "M1 handoff asks before taking over",
+  (await page.locator(".handoff-dialog").innerText()).includes("report.pdf"),
+);
+await page.locator(".handoff-dialog footer .primary").click();
 await page.waitForFunction(
   () =>
     document.querySelector(".unified-download textarea")?.value ===
     "https://example.com/files/report.pdf",
 );
 check(
-  "M1 handoff fills the download box",
+  "M2 handoff fills the download box",
   (await page.locator(".unified-download textarea").inputValue()) ===
     "https://example.com/files/report.pdf",
 );
@@ -864,7 +870,7 @@ await page.waitForFunction(() =>
     ?.textContent?.includes("普通文件链接"),
 );
 check(
-  "M2 handoff parses the link",
+  "M2b handoff parses the link",
   (await page.locator(".unified-type").innerText()).includes("普通文件链接"),
 );
 check(
@@ -980,7 +986,9 @@ check(
 await page.locator(".plugin-toggle").click();
 await page.waitForSelector(".plugin-dialog");
 await page.waitForFunction(() =>
-  document.querySelector(".plugin-dialog")?.textContent?.includes("扩展正常工作"),
+  document
+    .querySelector(".plugin-dialog")
+    ?.textContent?.includes("扩展正常工作"),
 );
 const pluginText = await page.locator(".plugin-dialog").innerText();
 check(

@@ -305,6 +305,21 @@ fn extension_folder(window: WebviewWindow, app: tauri::AppHandle) -> Result<Stri
         .ok_or_else(|| "找不到扩展目录，请重新安装应用".to_string())
 }
 
+/// 把链接交回默认浏览器，用于接力确认里选「用浏览器下载」。
+#[tauri::command]
+fn open_in_browser(window: WebviewWindow, url: String) -> Result<(), String> {
+    trusted(&window)?;
+    let parsed = url::Url::parse(&url).map_err(|_| "链接格式不正确".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("只支持 http/https 链接".into());
+    }
+    std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", parsed.as_str()])
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("打不开浏览器：{error}"))
+}
+
 /// 在资源管理器里打开扩展目录。
 ///
 /// 走系统 shell 而不是 opener 插件：插件的 scope 只对少数根目录放行，安装到
@@ -1292,6 +1307,7 @@ pub fn run() {
             bridge_status,
             extension_folder,
             open_extension_folder,
+            open_in_browser,
             enqueue,
             direct_commands::enqueue_direct,
             download_commands::inspect_download,

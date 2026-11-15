@@ -491,6 +491,7 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
       version: "0.2.0",
     };
   if (cmd === "extension_folder") return "D:\\CloudDownloader\\extension";
+  if (cmd === "open_extension_folder" || cmd === "open_in_browser") return null;
   if (cmd === "settings_set") {
     Object.assign(settings, args.settings);
     return { ...settings };

@@ -17,6 +17,7 @@ import SettingsPanel from "./SettingsPanel.vue";
 import DownloadBox from "./DownloadBox.vue";
 import TitleBar from "./TitleBar.vue";
 import PluginDialog from "./PluginDialog.vue";
+import HandoffDialog from "./HandoffDialog.vue";
 import { version } from "../package.json";
 import { type Settings as AppSettings, defaultSettings } from "./settings";
 import { checkForUpdates, updateStatus } from "./updater";
@@ -159,6 +160,7 @@ const driveTabs = computed(() =>
   providers.filter((p) => accountFor(p.id).loggedIn),
 );
 const error = ref("");
+const pendingHandoffs = ref<Handoff[]>([]);
 const toast = ref("");
 const pluginsOpen = ref(false);
 const filter = ref("");
@@ -722,9 +724,44 @@ async function folder(id?: string) {
 async function receiveHandoff() {
   const links = (await invoke<Handoff[] | null>("take_handoff")) ?? [];
   if (!links.length) return;
+  // 浏览器已经停掉了自己的下载，所以先弹窗确认；
+  // 15 秒不操作按用户设置默认交给应用。
+  pendingHandoffs.value.push(...links);
+}
+
+const currentHandoff = computed(() => pendingHandoffs.value[0] ?? null);
+
+async function takeHandoff() {
+  const link = pendingHandoffs.value.shift();
+  if (!link) return;
   tab.value = "all";
   await nextTick();
-  for (const link of links) await downloadBox.value?.receive(link);
+  await downloadBox.value?.receive(link);
+}
+
+async function browseHandoff() {
+  const link = pendingHandoffs.value.shift();
+  if (!link) return;
+  try {
+    await invoke("open_in_browser", { url: link.url });
+  } catch (failure) {
+    notice(String(failure));
+  }
+}
+
+function siteOf(item: Handoff | null) {
+  const referer = (item?.headers ?? []).find((header) =>
+    header.toLowerCase().startsWith("referer:"),
+  );
+  if (!referer) return "";
+  try {
+    return new URL(referer.slice(referer.indexOf(":") + 1).trim()).host;
+  } catch {
+    return "";
+  }
+}
+function ignoreHandoff() {
+  pendingHandoffs.value.shift();
 }
 onMounted(async () => {
   await refresh();
@@ -762,6 +799,16 @@ onUnmounted(() => {
       v-if="pluginsOpen"
       @close="pluginsOpen = false"
       @notice="notice"
+    />
+    <HandoffDialog
+      v-if="currentHandoff"
+      :key="currentHandoff.url"
+      :url="currentHandoff.url"
+      :filename="currentHandoff.filename"
+      :site="siteOf(currentHandoff)"
+      @take="takeHandoff"
+      @browse="browseHandoff"
+      @ignore="ignoreHandoff"
     />
     <aside class="sidebar">
       <div class="brand">
