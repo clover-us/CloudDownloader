@@ -301,8 +301,22 @@ pub fn extension_id(directory: &std::path::Path) -> Option<String> {
 fn extension_folder(window: WebviewWindow, app: tauri::AppHandle) -> Result<String, String> {
     trusted(&window)?;
     extension_dir(&app)
-        .map(|path| path.to_string_lossy().into_owned())
+        .map(|path| plain_path(&path))
         .ok_or_else(|| "找不到扩展目录，请重新安装应用".to_string())
+}
+
+/// Windows returns verbatim paths (`\\?\D:\...`) from canonicalize and from the
+/// resource directory; the opener plugin refuses them and Explorer shows them
+/// oddly, so hand the webview the ordinary form.
+fn plain_path(path: &std::path::Path) -> String {
+    let text = path.to_string_lossy().into_owned();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) => rest.to_string(),
+        None => text,
+    }
 }
 
 async fn start_task(
@@ -1319,7 +1333,22 @@ pub fn run() {
 
 #[cfg(test)]
 mod retry_tests {
-    use super::retry_connections;
+    use super::{plain_path, retry_connections};
+
+    #[test]
+    fn verbatim_windows_paths_lose_their_prefix() {
+        assert_eq!(
+            plain_path(std::path::Path::new(
+                r"\\?\D:\softwares\CloudDownloader\extension"
+            )),
+            r"D:\softwares\CloudDownloader\extension"
+        );
+        assert_eq!(
+            plain_path(std::path::Path::new(r"\\?\UNC\server\share\x")),
+            r"\\server\share\x"
+        );
+        assert_eq!(plain_path(std::path::Path::new(r"D:\plain")), r"D:\plain");
+    }
 
     const TLS: &str = "SSL/TLS handshake failure: Error: 操作成功完成。(0)";
 
