@@ -266,6 +266,28 @@ fn bridge_status(
     Ok(bridge::status(enabled))
 }
 
+/// 扩展所在目录：安装版在资源目录里，开发时就是仓库的 extension/。
+#[tauri::command]
+fn extension_folder(window: WebviewWindow, app: tauri::AppHandle) -> Result<String, String> {
+    trusted(&window)?;
+    if let Ok(base) = app.path().resource_dir() {
+        let bundled = base.join("extension");
+        if bundled.join("manifest.json").is_file() {
+            return Ok(bundled.to_string_lossy().into_owned());
+        }
+    }
+    let dev = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("extension");
+    if dev.join("manifest.json").is_file() {
+        return dev
+            .canonicalize()
+            .map(|path| path.to_string_lossy().into_owned())
+            .map_err(|_| "找不到扩展目录".to_string());
+    }
+    Err("找不到扩展目录，请重新安装应用".into())
+}
+
 async fn start_task(
     app: &tauri::AppHandle,
     state: &AppState,
@@ -704,7 +726,7 @@ async fn apply_task_action(
                     let _ = app.emit_to("main", "tasks-changed", ());
                     return Ok(());
                 }
-                let _ = rpc.stop_for_removal(&gid).await;
+                let _ = rpc.clear_stopped(&gid).await;
             }
             task.gid = None;
             start_task(app, state, task, None, prepared_session).await?;
@@ -1222,6 +1244,7 @@ pub fn run() {
             settings_set,
             take_handoff,
             bridge_status,
+            extension_folder,
             enqueue,
             direct_commands::enqueue_direct,
             download_commands::inspect_download,

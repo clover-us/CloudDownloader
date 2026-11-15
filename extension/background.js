@@ -126,3 +126,31 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
     await notifyFailure(error);
   }
 });
+
+// The desktop app cannot look inside the browser, so this worker says hello on a
+// timer. The title-bar plugin button treats a recent hello as "installed and
+// working" and silence as "not installed, disabled, or the app is not running".
+async function hello() {
+  const { port } = await settings();
+  try {
+    await fetch(`http://127.0.0.1:${port}/ping`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ version: chrome.runtime.getManifest().version }),
+    });
+  } catch {
+    // Nothing to report: the app is simply not running right now.
+  }
+}
+
+function beat() {
+  chrome.alarms.create("heartbeat", { periodInMinutes: 1 });
+  void hello();
+}
+
+chrome.runtime.onInstalled.addListener(beat);
+chrome.runtime.onStartup.addListener(beat);
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === "heartbeat") void hello();
+});
+beat();

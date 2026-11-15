@@ -976,6 +976,25 @@ check(
   JSON.stringify(originBadge),
 );
 
+// --- N. Title bar plugin button ---
+await page.locator(".plugin-toggle").click();
+await page.waitForSelector(".plugin-dialog");
+await page.waitForFunction(() =>
+  document.querySelector(".plugin-dialog")?.textContent?.includes("扩展正常工作"),
+);
+const pluginText = await page.locator(".plugin-dialog").innerText();
+check(
+  "N1 plugin button shows the extension state",
+  pluginText.includes("127.0.0.1:17890") && pluginText.includes("0.2.0"),
+  pluginText.slice(0, 120),
+);
+await page.getByRole("button", { name: "重新检测" }).click();
+await page.waitForTimeout(300);
+check("N2 plugin dialog re-checks", true);
+await page.locator(".plugin-close").click();
+await page.waitForSelector(".plugin-dialog", { state: "detached" });
+check("N3 plugin dialog closes", true);
+
 check(
   "Z1 no page errors",
   pageErrors.length === 0,

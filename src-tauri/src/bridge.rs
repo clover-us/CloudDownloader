@@ -31,6 +31,21 @@ static LISTENING: AtomicBool = AtomicBool::new(false);
 /// The last request that arrived, so a hand-off that did not show up can be
 /// explained without reading logs.
 static LAST: Mutex<Option<LastHandoff>> = Mutex::new(None);
+/// The last time the extension said hello, so the title bar can tell an
+/// installed extension from a missing one without reading logs.
+static SEEN: Mutex<Option<Seen>> = Mutex::new(None);
+/// A ping older than this is stale: browsers stop background timers when they
+/// are asleep, so the title bar only calls it missing after a generous gap.
+const SEEN_FRESH_SECS: u64 = 180;
+
+/// The last hello from the extension.
+#[derive(Clone, Debug, Default)]
+pub struct Seen {
+    /// Unix seconds.
+    pub at: u64,
+    /// Version the extension reports, empty when it did not say.
+    pub version: String,
+}
 
 /// One bridge request, kept for the settings page.
 #[derive(Clone, Debug, Default, Serialize)]
@@ -63,6 +78,22 @@ fn record(site: String, ok: bool, message: String) {
     }
 }
 
+/// 记下扩展刚联系过本机，供标题栏的插件按钮判断它是否装好并在运行。
+pub fn mark_seen(version: Option<&str>) {
+    let mut version = version.unwrap_or_default().trim().to_string();
+    version.truncate(32);
+    if let Ok(mut seen) = SEEN.lock() {
+        let now = now();
+        // Keep the version we already know when a heartbeat omits it.
+        if version.is_empty() {
+            if let Some(previous) = seen.as_ref() {
+                version = previous.version.clone();
+            }
+        }
+        *seen = Some(Seen { at: now, version });
+    }
+}
+
 /// What the settings page shows about the browser hand-off.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,14 +104,26 @@ pub struct BridgeStatus {
     /// The user has not turned the bridge off in settings.
     pub enabled: bool,
     pub last: Option<LastHandoff>,
+    /// Unix seconds of the last hello from the extension.
+    pub seen_at: Option<u64>,
+    /// Version the extension reported.
+    pub version: String,
 }
 
 pub fn status(enabled: bool) -> BridgeStatus {
+    let seen = SEEN.lock().ok().and_then(|seen| seen.clone());
+    let fresh = seen
+        .as_ref()
+        .filter(|seen| now().saturating_sub(seen.at) <= SEEN_FRESH_SECS);
     BridgeStatus {
         listening: LISTENING.load(Ordering::Relaxed),
         port: PORT.load(Ordering::Relaxed),
         enabled,
         last: LAST.lock().ok().and_then(|last| last.clone()),
+        seen_at: fresh
+            .map(|seen| seen.at)
+            .or_else(|| seen.as_ref().map(|seen| seen.at)),
+        version: seen.map(|seen| seen.version).unwrap_or_default(),
     }
 }
 
@@ -144,6 +187,11 @@ fn answer(mut stream: TcpStream, app: &tauri::AppHandle) -> std::io::Result<()> 
         Err((status, message)) => return reply(&mut stream, status, None, &message),
     };
     let origin = extension_origin(header_value(&head, "origin").as_deref());
+    // Any request from a real extension origin proves it is installed and
+    // talking to us; heartbeats also carry the version for the title bar.
+    if origin.is_some() {
+        mark_seen(extension_version(&body).as_deref());
+    }
     let enabled = bridge_enabled(app);
     let adds = request_line(&head).is_some_and(|(_, target)| target == "/add");
     match route(&head, &body, origin.as_deref(), enabled) {
@@ -252,6 +300,15 @@ fn route(
     )
     .map_err(|message| (400, message))?;
     Ok(Routed::Add(item))
+}
+
+/// The version a heartbeat reports, if it sent one.
+fn extension_version(body: &[u8]) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
+    value
+        .get("version")
+        .and_then(|version| version.as_str())
+        .map(str::to_string)
 }
 
 /// `chrome-extension://<id>` with the 32-letter id Chrome generates.

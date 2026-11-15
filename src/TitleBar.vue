@@ -3,11 +3,11 @@ import { onMounted, onUnmounted, ref } from "vue";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { Copy, Minus, Moon, Square, Sun, X } from "@lucide/vue";
+import { Copy, Minus, Moon, Puzzle, Square, Sun, X } from "@lucide/vue";
 import icon from "../icon.svg";
 import { theme, syncWindowTheme, toggleTheme } from "./theme";
 
-const emit = defineEmits<{ error: [message: string] }>();
+const emit = defineEmits<{ error: [message: string]; plugins: [] }>();
 const maximized = ref(false);
 let unlistenResize: UnlistenFn | undefined;
 let disposed = false;
@@ -59,6 +59,14 @@ onUnmounted(() => {
       <span>CloudDownloader · 云盘下载器</span>
     </div>
     <div class="window-controls">
+      <button
+        class="window-control plugin-toggle"
+        aria-label="浏览器扩展"
+        title="浏览器扩展：检测与安装"
+        @click="emit('plugins')"
+      >
+        <Puzzle :size="15" />
+      </button>
       <button
         class="window-control theme-toggle"
         role="switch"

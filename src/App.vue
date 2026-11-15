@@ -16,6 +16,7 @@ import SharePanel from "./SharePanel.vue";
 import SettingsPanel from "./SettingsPanel.vue";
 import DownloadBox from "./DownloadBox.vue";
 import TitleBar from "./TitleBar.vue";
+import PluginDialog from "./PluginDialog.vue";
 import { version } from "../package.json";
 import { type Settings as AppSettings, defaultSettings } from "./settings";
 import { checkForUpdates, updateStatus } from "./updater";
@@ -159,6 +160,7 @@ const driveTabs = computed(() =>
 );
 const error = ref("");
 const toast = ref("");
+const pluginsOpen = ref(false);
 const filter = ref("");
 const pendingAction = ref<string | null>(null);
 const selected = ref<string[]>([]);
@@ -752,7 +754,15 @@ onUnmounted(() => {
 
 <template>
   <div class="app-shell">
-    <TitleBar @error="(message) => (error = message)" />
+    <TitleBar
+      @error="(message) => (error = message)"
+      @plugins="pluginsOpen = true"
+    />
+    <PluginDialog
+      v-if="pluginsOpen"
+      @close="pluginsOpen = false"
+      @notice="notice"
+    />
     <aside class="sidebar">
       <div class="brand">
         <span class="brand-mark"

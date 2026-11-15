@@ -52,6 +52,7 @@
     "resources": {
       "binaries/aria2c-x86_64-pc-windows-msvc.exe": "bin/aria2c.exe",
       "../third-party/notices/*": "bin/notices/",
+      "../extension": "extension",
       "../README.md": "README.md",
       "../VERIFICATION.md": "VERIFICATION.md"
     },

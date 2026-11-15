@@ -487,7 +487,10 @@ async function invoke(cmd: string, args: any = {}): Promise<unknown> {
       port: settings.bridgePort,
       enabled: settings.browserBridge,
       last: state.lastHandoff,
+      seenAt: Math.floor(Date.now() / 1000) - 20,
+      version: "0.2.0",
     };
+  if (cmd === "extension_folder") return "D:\\CloudDownloader\\extension";
   if (cmd === "settings_set") {
     Object.assign(settings, args.settings);
     return { ...settings };

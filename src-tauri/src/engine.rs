@@ -205,8 +205,19 @@ impl Rpc {
         Ok(gid)
     }
 
+    /// 丢掉引擎里已停止的任务记录，但**不**碰磁盘上的 `.aria2`。
+    ///
+    /// `forceRemove` 会顺手删掉控制文件，而续传全靠它：用户点「继续」时如果旧
+    /// 任务还停在 error 状态，用 forceRemove 清理就等于把进度扔了。这里先暂停
+    /// （对已停止的任务是空操作），再只清掉结果记录，控制文件原样保留。
+    pub async fn clear_stopped(&self, gid: &str) {
+        let _ = self.call("aria2.forcePause", vec![json!(gid)]).await;
+        let _ = self
+            .call("aria2.removeDownloadResult", vec![json!(gid)])
+            .await;
+    }
+
     pub async fn stop_for_removal(&self, gid: &str) -> Result<(), String> {
-        // forceRemove can race with completion or an already removed result.
         // Confirm a terminal status before allowing any local file deletion.
         let _ = self.call("aria2.forceRemove", vec![json!(gid)]).await;
         for _ in 0..50 {

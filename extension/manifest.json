@@ -14,7 +14,8 @@
     "cookies",
     "storage",
     "contextMenus",
-    "notifications"
+    "notifications",
+    "alarms"
   ],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js" },
